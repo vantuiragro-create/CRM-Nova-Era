@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CRM Agro — Leads do Chatwoot</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🌱</span>
+      <div>
+        <h1>CRM Agro</h1>
+        <p class="sub">Leads do Chatwoot · SDR → Vendedor</p>
+      </div>
+    </div>
+    <div class="stats" id="stats"><!-- preenchido via JS --></div>
+    <div class="actions">
+      <button class="btn ghost" id="btnTeam" title="Equipe">👥 Equipe</button>
+      <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
+      <button class="btn primary" id="btnNew">+ Novo lead</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
+    <select id="filterCanal">
+      <option value="">Todos os canais</option>
+      <option value="Meta">Meta (Facebook/Instagram)</option>
+      <option value="Google">Google</option>
+      <option value="WhatsApp">WhatsApp</option>
+      <option value="TikTok">TikTok</option>
+      <option value="Indicação">Indicação</option>
+      <option value="Outro">Outro</option>
+    </select>
+    <select id="filterLane">
+      <option value="">Todas as raias</option>
+    </select>
+    <span class="hint" id="autoHint">Atualiza automaticamente a cada 15s</span>
+  </div>
+
+  <main class="board-wrap" id="boardWrap">
+    <div class="swimboard" id="swimboard"><!-- swimlanes via JS --></div>
+  </main>
+
+  <!-- Modal de detalhe / edição do lead -->
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="modalTitle">Lead</h2>
+        <button class="icon-btn" id="modalClose" aria-label="Fechar">✕</button>
+      </div>
+      <form id="leadForm" class="modal-body">
+        <input type="hidden" name="id" />
+
+        <div class="classify" id="classifyBox">
+          <span class="classify-label">Classificação do SDR:</span>
+          <div class="seg">
+            <label class="seg-opt"><input type="radio" name="tipo" value="" /> <span>—</span></label>
+            <label class="seg-opt produtor"><input type="radio" name="tipo" value="produtor" /> <span>🌾 Produtor rural</span></label>
+            <label class="seg-opt prestador"><input type="radio" name="tipo" value="prestador" /> <span>🔧 Prestador de serviço</span></label>
+          </div>
+        </div>
+
+        <div class="grid">
+          <label class="full">Nome do produtor
+            <input name="nome" placeholder="Ex.: João da Silva" />
+          </label>
+          <label>Telefone / WhatsApp
+            <input name="telefone" placeholder="Ex.: +55 62 99999-0000" />
+          </label>
+          <label>E-mail
+            <input name="email" type="email" placeholder="opcional" />
+          </label>
+          <label>Região do produtor
+            <input name="regiao" placeholder="Ex.: Rio Verde - GO" />
+          </label>
+          <label>Área cultivada
+            <input name="area_cultivada" placeholder="Ex.: 500 ha" />
+          </label>
+          <label>Produto de interesse
+            <input name="produto" placeholder="Ex.: Semente de soja" />
+          </label>
+          <label>Valor estimado (R$)
+            <input name="valor" type="number" min="0" step="100" placeholder="0" />
+          </label>
+
+          <div class="section-title full">Responsáveis</div>
+          <label>SDR (primeiro contato)
+            <select name="sdr" id="sdrSelect"></select>
+          </label>
+          <label>Vendedor responsável
+            <select name="vendedor" id="vendedorSelect"></select>
+          </label>
+          <label>Etapa do funil
+            <select name="status" id="statusSelect"></select>
+          </label>
+
+          <div class="section-title full">Origem do tráfego</div>
+          <label>Canal
+            <select name="origem_canal">
+              <option value="">—</option>
+              <option>Meta</option>
+              <option>Google</option>
+              <option>WhatsApp</option>
+              <option>TikTok</option>
+              <option>Indicação</option>
+              <option>Outro</option>
+            </select>
+          </label>
+          <label>Campanha
+            <input name="campanha" placeholder="Ex.: Soja Safra 25/26" />
+          </label>
+          <label>utm_source
+            <input name="utm_source" placeholder="ex.: facebook" />
+          </label>
+          <label>utm_medium
+            <input name="utm_medium" placeholder="ex.: cpc" />
+          </label>
+          <label>utm_campaign
+            <input name="utm_campaign" placeholder="ex.: soja_go" />
+          </label>
+          <label>utm_content
+            <input name="utm_content" placeholder="ex.: anuncio_video_1" />
+          </label>
+          <label class="full">Observações
+            <textarea name="observacoes" rows="3" placeholder="Anotações do atendimento…"></textarea>
+          </label>
+        </div>
+        <div class="meta-line" id="metaLine"></div>
+      </form>
+      <div class="modal-foot">
+        <button class="btn danger ghost" id="btnDelete" type="button">Excluir</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
+        <button class="btn primary" id="btnSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal da Equipe -->
+  <div class="modal-backdrop" id="teamBackdrop" hidden>
+    <div class="modal narrow" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Equipe</h2>
+        <button class="icon-btn" id="teamClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note">Cadastre seus SDRs e vendedores. Os leads novos do Chatwoot são
+          distribuídos automaticamente entre os SDRs ativos (rodízio).</p>
+        <div id="teamList" class="team-list"><!-- via JS --></div>
+        <form id="teamForm" class="team-add">
+          <input name="nome" placeholder="Nome da pessoa" required />
+          <select name="papel">
+            <option value="sdr">SDR</option>
+            <option value="vendedor">Vendedor</option>
+          </select>
+          <button class="btn primary" type="submit">Adicionar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

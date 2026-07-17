@@ -1,0 +1,26 @@
+# Sobe o CRM no MESMO servidor do seu Chatwoot.
+#
+# Como usar (no servidor, dentro da pasta do projeto):
+#   1) troque o WEBHOOK_TOKEN abaixo por algo so seu
+#   2) docker compose up -d
+#   3) aponte um subdominio (ex.: crm.seudominio.com.br) para a porta 3000
+#      no seu proxy reverso (nginx/Caddy/Traefik) — veja o DEPLOY.md
+#
+# Os leads ficam no volume "crm_dados", entao NAO somem quando reinicia.
+
+services:
+  crm:
+    build: .
+    container_name: chatwoot-crm
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      DATA_DIR: "/data"
+      WEBHOOK_TOKEN: "troque-por-um-token-secreto-seu"
+    ports:
+      - "3000:3000"
+    volumes:
+      - crm_dados:/data
+
+volumes:
+  crm_dados:

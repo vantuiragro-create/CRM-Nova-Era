@@ -1,0 +1,9 @@
+# Dados locais (nao versionar os leads)
+data/
+*.log
+
+# Node
+node_modules/
+
+# Sistema
+.DS_Store
