@@ -18,6 +18,7 @@
     </div>
     <div class="stats" id="stats"><!-- preenchido via JS --></div>
     <div class="actions">
+      <button class="btn ghost" id="btnCampaigns" title="Campanhas">📣 Campanhas</button>
       <button class="btn ghost" id="btnTeam" title="Equipe">👥 Equipe</button>
       <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
       <button class="btn primary" id="btnNew">+ Novo lead</button>
@@ -110,7 +111,10 @@
               <option>Outro</option>
             </select>
           </label>
-          <label>Campanha
+          <label>Campanha cadastrada
+            <select name="campanha_id" id="campanhaSelect"></select>
+          </label>
+          <label>Campanha (texto livre)
             <input name="campanha" placeholder="Ex.: Soja Safra 25/26" />
           </label>
           <label>utm_source
@@ -136,6 +140,47 @@
         <div class="spacer"></div>
         <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
         <button class="btn primary" id="btnSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Campanhas -->
+  <div class="modal-backdrop" id="campBackdrop" hidden>
+    <div class="modal wide" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>📣 Campanhas</h2>
+        <button class="icon-btn" id="campClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note">Cadastre cada campanha de tráfego pago. O CRM identifica a campanha do
+          lead automaticamente: pelos dados do anúncio (Meta → WhatsApp), pelas UTMs da landing page
+          ou pelo <b>#código</b> na primeira mensagem — use o link de WhatsApp gerado abaixo no seu anúncio.</p>
+
+        <div class="settings-row">
+          <label class="inline">Seu número de WhatsApp (com DDI+DDD, só dígitos)
+            <input id="waNumber" placeholder="Ex.: 5562999990000" />
+          </label>
+          <button class="btn primary small" id="btnSaveWa" type="button">Salvar número</button>
+        </div>
+
+        <form id="campForm" class="camp-add">
+          <input name="nome" placeholder="Nome da campanha (ex.: Soja Safra 2025)" required />
+          <select name="canal">
+            <option>Meta</option>
+            <option>Google</option>
+            <option>WhatsApp</option>
+            <option>TikTok</option>
+            <option>Indicação</option>
+            <option>Outro</option>
+          </select>
+          <input name="keyword" placeholder="Palavra-chave (opcional)" />
+          <button class="btn primary" type="submit">Adicionar</button>
+        </form>
+
+        <div id="campList" class="camp-list"><!-- via JS --></div>
+
+        <div class="section-title" style="margin-top:18px">📊 Resultado por campanha</div>
+        <div id="campReport" class="camp-report"><!-- via JS --></div>
       </div>
     </div>
   </div>

@@ -109,15 +109,20 @@ aparecer como um card na coluna **"Novo lead"** do CRM.
 
 ## 🎯 Fazer o canal/campanha (Meta, Google) aparecer preenchido
 
-Para o CRM saber de qual anúncio veio o lead, o Chatwoot precisa receber essa
-informação. Duas formas:
+O jeito principal é pelo painel **📣 Campanhas** do próprio CRM: cadastre a
+campanha, copie o **link de WhatsApp gerado** (com o código `#…`) e use-o como
+destino do anúncio. A primeira mensagem do lead já identifica a campanha.
 
-- **Pelo site (referer):** mande o tráfego pago para uma landing page com UTMs na
-  URL, ex.: `...?utm_source=facebook&utm_medium=cpc&utm_campaign=soja_2526`, e
-  use o **widget do Chatwoot** nessa página. O CRM lê o referer e preenche
-  canal + campanha sozinho.
-- **Por atributos personalizados:** se você usa formulário pré-chat ou automação,
-  salve na conversa/contato os atributos `utm_source`, `utm_campaign`, `regiao`,
-  `area_cultivada`, `produto`. O CRM aproveita todos eles.
+Rotas adicionais que o CRM entende automaticamente:
 
-Se algum lead vier sem essa info, é só abrir o card e preencher à mão.
+- **Anúncio Meta clique-pro-WhatsApp:** o CRM captura o bloco de dados do
+  anúncio repassado pelo Chatwoot (título, id do anúncio, ctwa_clid). Cadastre a
+  campanha com uma **palavra-chave** presente no título do anúncio para o
+  vínculo ser automático.
+- **Pelo site (referer):** mande o tráfego para uma landing com UTMs na URL
+  (use o sufixo que o painel de Campanhas gera) e o **widget do Chatwoot** nela.
+- **Por atributos personalizados:** formulário pré-chat ou automação salvando
+  `utm_source`, `utm_campaign`, `regiao`, `area_cultivada`, `produto` na
+  conversa/contato — o CRM aproveita todos.
+
+Se algum lead vier sem essa info, é só abrir o card e escolher a campanha à mão.

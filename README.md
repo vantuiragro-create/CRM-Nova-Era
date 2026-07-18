@@ -51,6 +51,25 @@ automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequênc
 - O painel **atualiza sozinho a cada 15s** — leads novos do Chatwoot aparecem
   sem precisar recarregar.
 
+### 📣 Campanhas (saber de onde veio cada lead)
+
+Clique em **📣 Campanhas**, salve seu número de WhatsApp e cadastre cada campanha
+de tráfego pago. Cada uma ganha um **código** (ex.: `#SOJA25`) e o CRM gera:
+
+- **Link p/ anúncio** — um link de WhatsApp com mensagem pronta contendo o
+  código. Use-o como destino do anúncio (Meta/Google): quando o lead manda a
+  primeira mensagem, o CRM identifica a campanha na hora.
+- **Landing (UTM)** — o sufixo de UTMs para colar na URL da sua landing page.
+
+A atribuição é automática por 3 rotas (nesta ordem): dados do anúncio Meta
+clique-pro-WhatsApp (título/id do anúncio, ctwa_clid), UTMs da landing, e
+código `#…` ou palavra-chave na mensagem. O painel mostra o **resultado por
+campanha** (leads, produtores, ganhos e R$) para você saber o que converte.
+
+> Dica para anúncios Meta → WhatsApp: cadastre a campanha com uma
+> **palavra-chave** que apareça no título do anúncio (ex.: "soja premium") —
+> os leads desses anúncios vinculam sozinhos, sem precisar do código.
+
 ---
 
 ## 3. Conectar o Chatwoot (leads automáticos)

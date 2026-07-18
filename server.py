@@ -12,12 +12,14 @@ Webhook do Chatwoot: http://localhost:3000/webhook/chatwoot?token=SEU_TOKEN
 """
 
 import json
+import math
 import os
 import re
 import base64
 import hashlib
 import secrets
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -52,9 +54,12 @@ PAPEIS = ("sdr", "vendedor")
 EDITABLE = {
     "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
-    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
-    "status", "observacoes",
+    "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
+    "utm_term", "status", "observacoes",
 }
+
+# Canais aceitos para campanhas cadastradas
+CANAIS = ("Meta", "Google", "WhatsApp", "TikTok", "Indicação", "Outro")
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -70,7 +75,8 @@ MIME = {
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
 # members: equipe (SDRs e vendedores) | rr_sdr: indice do rodizio de SDRs
-_db = {"leads": [], "members": [], "rr_sdr": 0}
+# campaigns: campanhas cadastradas (atribuicao) | settings: config (nro WhatsApp)
+_db = {"leads": [], "members": [], "rr_sdr": 0, "campaigns": [], "settings": {}}
 
 
 def now_iso():
@@ -93,10 +99,21 @@ def load_db():
                 data["members"] = []
             if not isinstance(data.get("rr_sdr"), int):
                 data["rr_sdr"] = 0
+            if not isinstance(data.get("campaigns"), list):
+                data["campaigns"] = []
+            if not isinstance(data.get("settings"), dict):
+                data["settings"] = {}
             _db = data
     except Exception as e:
-        print("Falha ao ler o banco, comecando vazio:", e)
-        _db = {"leads": []}
+        # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
+        # Renomeia para .corrompido-<ts> e recomeca vazio; o original fica salvo.
+        backup = "%s.corrompido-%d" % (DB_FILE, int(time.time()))
+        try:
+            os.replace(DB_FILE, backup)
+            print("AVISO: banco ilegivel (%s). Copia guardada em: %s" % (e, backup))
+        except OSError:
+            print("AVISO: banco ilegivel e nao foi possivel criar backup:", e)
+        _db = {"leads": [], "members": [], "rr_sdr": 0, "campaigns": [], "settings": {}}
 
 
 def save_db():
@@ -129,7 +146,10 @@ def make_lead(partial=None):
         "vendedor": "",    # vendedor responsavel apos qualificar
         "responsavel": "", # dono atual do lead (SDR na triagem, vendedor depois)
         "origem_canal": "",
-        "campanha": "",
+        "campanha": "",     # nome da campanha (texto exibido)
+        "campanha_id": "",  # vinculo com uma campanha cadastrada
+        "meta_ad_id": "",   # id do anuncio (Meta clique-pro-WhatsApp)
+        "ctwa_clid": "",    # id de clique do anuncio (Meta)
         "utm_source": "",
         "utm_medium": "",
         "utm_campaign": "",
@@ -159,9 +179,11 @@ def apply_updates(lead, updates):
             continue
         if key == "valor":
             try:
-                lead["valor"] = float(value) if value not in ("", None) else 0
+                v = float(value) if value not in ("", None) else 0.0
             except (TypeError, ValueError):
-                lead["valor"] = 0
+                v = 0.0
+            # NaN/Infinity passam no float() mas quebrariam o JSON do banco
+            lead["valor"] = v if math.isfinite(v) else 0.0
             continue
         lead[key] = value
 
@@ -176,6 +198,17 @@ def apply_updates(lead, updates):
     # responsavel tenha sido informado explicitamente na mesma atualizacao).
     if updates.get("vendedor") and "responsavel" not in updates:
         lead["responsavel"] = updates["vendedor"]
+
+    # Vinculo manual com campanha cadastrada: valida e espelha o nome no lead.
+    if "campanha_id" in updates:
+        camp = next((c for c in _db.get("campaigns", []) if c["id"] == updates["campanha_id"]), None)
+        if camp:
+            lead["campanha_id"] = camp["id"]
+            lead["campanha"] = camp["nome"]
+            if not lead.get("origem_canal"):
+                lead["origem_canal"] = camp.get("canal", "")
+        else:
+            lead["campanha_id"] = ""
 
     lead["updated_at"] = now_iso()
     return lead
@@ -215,19 +248,148 @@ def parse_utms(referer):
     return out
 
 
+SOURCE_CANAL = {
+    "facebook": "Meta", "instagram": "Meta", "fb": "Meta", "ig": "Meta",
+    "meta": "Meta", "google": "Google", "adwords": "Google", "youtube": "Google",
+    "whatsapp": "WhatsApp", "wa": "WhatsApp", "tiktok": "TikTok",
+}
+
+
 def guess_canal(utms, referer):
-    hay = ((utms.get("utm_source") or "") + " " + (referer or "")).lower()
-    if re.search(r"facebook|instagram|fb|ig|meta", hay):
+    """Deduz o canal comparando tokens exatos (nunca substring solta — 'ig'
+    dentro de 'campaign' ou 'digital' nao pode virar Meta)."""
+    src = (utms.get("utm_source") or "").strip().lower()
+    if src in SOURCE_CANAL:
+        return SOURCE_CANAL[src]
+
+    host, query = "", ""
+    try:
+        parsed = urlparse(referer or "")
+        host = (parsed.netloc or "").lower()
+        query = (parsed.query or "").lower()
+    except Exception:
+        pass
+    if host:
+        if re.search(r"(^|\.)(facebook\.com|instagram\.com|fb\.me|fb\.com|meta\.com)$", host):
+            return "Meta"
+        if re.search(r"(^|\.)(google\.[a-z.]+|youtube\.com)$", host):
+            return "Google"
+        if re.search(r"(^|\.)(wa\.me|whatsapp\.com)$", host):
+            return "WhatsApp"
+        if re.search(r"(^|\.)tiktok\.com$", host):
+            return "TikTok"
+    # ids de clique presentes na URL denunciam a origem
+    if "fbclid=" in query:
         return "Meta"
-    if re.search(r"google|adwords|gclid", hay):
+    if "gclid=" in query:
         return "Google"
-    if re.search(r"whatsapp|wa\.me", hay):
-        return "WhatsApp"
-    if re.search(r"tiktok", hay):
-        return "TikTok"
-    if utms.get("utm_source"):
-        return utms["utm_source"]
-    return ""
+    return utms.get("utm_source", "")
+
+
+def find_referral(payload):
+    """
+    Procura os dados de anuncio "clique-pro-WhatsApp" (Meta) no evento.
+
+    Quando alguem clica num anuncio do Facebook/Instagram que abre o WhatsApp,
+    a primeira mensagem chega com um bloco "referral" (id do anuncio, titulo,
+    ctwa_clid...). O lugar exato varia conforme a versao do Chatwoot, entao
+    fazemos uma busca em largura (limitada) por um dicionario com essa cara.
+    """
+    def looks_like_referral(d):
+        if not isinstance(d, dict):
+            return False
+        if d.get("ctwa_clid"):
+            return True
+        if d.get("source_id") and d.get("source_type"):
+            return True
+        if d.get("source_url") and (d.get("headline") or d.get("body")):
+            return True
+        return False
+
+    queue = [payload]
+    seen = 0
+    while queue and seen < 200:
+        node = queue.pop(0)
+        seen += 1
+        if looks_like_referral(node):
+            return {
+                "source_id": str(node.get("source_id") or ""),
+                "source_type": str(node.get("source_type") or ""),
+                "headline": str(node.get("headline") or ""),
+                "body": str(node.get("body") or ""),
+                "source_url": str(node.get("source_url") or ""),
+                "ctwa_clid": str(node.get("ctwa_clid") or ""),
+            }
+        if isinstance(node, dict):
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    return None
+
+
+def match_campaign(utms, message_text):
+    """
+    Tenta vincular o lead a uma campanha cadastrada. Prioridade:
+      1. utm_campaign igual ao codigo, ao utm_campaign ou ao nome da campanha
+      2. "#CODIGO" presente no texto da mensagem (link de WhatsApp do anuncio)
+      3. palavra-chave da campanha presente na mensagem
+    """
+    campaigns = [c for c in _db.get("campaigns", []) if c.get("ativo", True)]
+    if not campaigns:
+        return None
+
+    utm_c = (utms.get("utm_campaign") or "").strip().lower()
+    if utm_c:
+        for c in campaigns:
+            candidates = {c.get("codigo", ""), c.get("utm_campaign", ""), c.get("nome", "")}
+            if utm_c in {x.strip().lower() for x in candidates if x}:
+                return c
+
+    text = (message_text or "").lower()
+    if text:
+        for c in campaigns:
+            code = (c.get("codigo") or "").strip().lower()
+            # fronteira apos o codigo: evita "#SOJA" casar com "#SOJA25"
+            if code and re.search("#" + re.escape(code) + r"(?![a-z0-9])", text):
+                return c
+        # keywords mais longas primeiro ("soja premium" vence "soja"), e com
+        # fronteira de palavra ("uva" nao pode casar "chuva", "milho"/"milhoes")
+        by_len = sorted(campaigns, key=lambda c: len(c.get("keyword") or ""), reverse=True)
+        for c in by_len:
+            kw = (c.get("keyword") or "").strip().lower()
+            if kw and re.search(r"\b" + re.escape(kw) + r"\b", text):
+                return c
+    return None
+
+
+def gen_codigo(nome):
+    """Gera um codigo curto e unico a partir do nome (ex.: 'Soja Safra 2025' -> SOJA25)."""
+    letters = re.sub(r"[^A-Za-z]", "", nome or "").upper()[:4] or "CAMP"
+    digits = re.sub(r"[^0-9]", "", nome or "")[-2:]
+    base = letters + digits
+    existing = {(c.get("codigo") or "").upper() for c in _db.get("campaigns", [])}
+    codigo, n = base, 1
+    while codigo.upper() in existing:
+        n += 1
+        codigo = "%s%d" % (base, n)
+    return codigo
+
+
+# Eventos do Chatwoot que realmente representam conversa/mensagem de lead.
+# contact_updated & cia. tem "id" de CONTATO no topo — tratar como conversa
+# criaria leads fantasma com id trocado (colisao garantida entre sequencias).
+CONVERSATION_EVENTS = ("conversation_created", "conversation_updated", "conversation_status_changed")
+MESSAGE_EVENTS = ("message_created", "message_updated")
+
+
+def _is_incoming(msg):
+    """So mensagem do LEAD conta (nao a resposta do atendente nem nota privada)."""
+    if not isinstance(msg, dict):
+        return False
+    if msg.get("private"):
+        return False
+    mt = msg.get("message_type")
+    return mt in ("incoming", 0, None)  # None: payload minimo/sintetico
 
 
 def handle_chatwoot_event(payload):
@@ -235,19 +397,25 @@ def handle_chatwoot_event(payload):
     if not event:
         return {"ok": False, "reason": "sem evento"}
 
-    conversation = payload.get("conversation") or payload
+    # Filtra os tipos de evento suportados; os demais sao confirmados e ignorados
+    if event in CONVERSATION_EVENTS:
+        conversation = payload
+        conversation_id = payload.get("id")
+    elif event in MESSAGE_EVENTS:
+        # mensagem do atendente/nota privada: nao mexe no lead
+        if not _is_incoming(payload):
+            return {"ok": True, "ignored": "mensagem nao-recebida (outgoing/privada)"}
+        conversation = payload.get("conversation") or {}
+        conversation_id = conversation.get("id") or payload.get("conversation_id")
+    else:
+        return {"ok": True, "ignored": event}
+
     meta = conversation.get("meta") or payload.get("meta") or {}
     sender = (
         meta.get("sender")
         or payload.get("sender")
         or (payload.get("contact_inbox") or {}).get("contact")
         or {}
-    )
-
-    conversation_id = (
-        conversation.get("id")
-        or payload.get("conversation_id")
-        or (payload.get("conversation") or {}).get("id")
     )
 
     add_attrs = conversation.get("additional_attributes") or payload.get("additional_attributes") or {}
@@ -264,7 +432,9 @@ def handle_chatwoot_event(payload):
     last_message = ""
     msgs = payload.get("messages")
     if isinstance(msgs, list) and msgs:
-        last_message = msgs[-1].get("content") or ""
+        incoming_msgs = [m for m in msgs if _is_incoming(m)]
+        if incoming_msgs:
+            last_message = incoming_msgs[-1].get("content") or ""
     elif payload.get("content"):
         last_message = payload.get("content")
 
@@ -278,6 +448,32 @@ def handle_chatwoot_event(payload):
     area = sender_custom.get("area_cultivada") or sender_custom.get("area") or custom.get("area_cultivada") or ""
     produto = sender_custom.get("produto") or custom.get("produto") or ""
 
+    # ---- Atribuicao de campanha ----
+    # Rota 1: anuncio Meta clique-pro-WhatsApp (bloco "referral" no evento)
+    referral = find_referral(payload)
+    meta_ad_id = ""
+    ctwa_clid = ""
+    campanha_nome = utms.get("utm_campaign", "")
+    if referral:
+        canal = canal or "Meta"
+        meta_ad_id = referral["source_id"]
+        ctwa_clid = referral["ctwa_clid"]
+        if not campanha_nome:
+            campanha_nome = referral["headline"] or ("Anúncio " + meta_ad_id if meta_ad_id else "")
+
+    # Rotas 2 e 3: campanha cadastrada casando com UTM ou com o texto da
+    # mensagem (o titulo/texto do anuncio tambem entram na busca por
+    # palavra-chave, para vincular leads de anuncio CTWA automaticamente)
+    match_text = last_message
+    if referral:
+        match_text = " ".join(x for x in (last_message, referral["headline"], referral["body"]) if x)
+    campanha_id = ""
+    camp = match_campaign(utms, match_text)
+    if camp:
+        campanha_id = camp["id"]
+        campanha_nome = camp["nome"]
+        canal = canal or camp.get("canal", "")
+
     incoming = {
         "source": "chatwoot",
         "chatwoot_conversation_id": conversation_id,
@@ -289,12 +485,21 @@ def handle_chatwoot_event(payload):
         "area_cultivada": area,
         "produto": produto,
         "origem_canal": canal,
-        "campanha": utms.get("utm_campaign", ""),
+        "campanha": campanha_nome,
+        "campanha_id": campanha_id,
+        "meta_ad_id": meta_ad_id,
+        "ctwa_clid": ctwa_clid,
         "last_message": last_message,
     }
     incoming.update(utms)
 
     with _lock:
+        # A campanha casada pode ter sido excluida entre o match (fora do lock)
+        # e agora; revalida para nao gravar vinculo orfao.
+        if incoming.get("campanha_id") and not any(
+                c["id"] == incoming["campanha_id"] for c in _db.get("campaigns", [])):
+            incoming["campanha_id"] = ""
+
         lead = None
         if conversation_id is not None:
             lead = next((l for l in _db["leads"] if l.get("chatwoot_conversation_id") == conversation_id), None)
@@ -313,6 +518,13 @@ def handle_chatwoot_event(payload):
             print("[webhook] novo lead: %s -> SDR %s (canal: %s)" % (
                 nome or telefone or conversation_id, sdr or "-", canal or "-"))
             return {"ok": True, "created": True, "id": lead["id"], "sdr": sdr}
+
+        # Se a campanha cadastrada foi identificada agora (ex.: o codigo veio na
+        # mensagem seguinte), vincula e espelha o nome mesmo que o campo texto
+        # ja tivesse algo generico (titulo do anuncio, utm solto).
+        if incoming.get("campanha_id") and not lead.get("campanha_id"):
+            lead["campanha_id"] = incoming["campanha_id"]
+            lead["campanha"] = incoming["campanha"]
 
         for key, value in incoming.items():
             if key == "last_message":
@@ -354,7 +566,11 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         if not raw:
             return {}
-        return json.loads(raw.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"))
+        # As rotas assumem objeto; lista/string/numero viraria AttributeError
+        if not isinstance(data, dict):
+            raise ValueError("esperado um objeto JSON")
+        return data
 
     # -- roteamento --
     def do_GET(self):
@@ -408,6 +624,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- API --
     def handle_api(self, method, parsed):
+        # Qualquer erro nao previsto vira 500 com resposta valida, em vez de
+        # derrubar a conexao sem status.
+        try:
+            return self._handle_api(method, parsed)
+        except Exception as e:
+            print("Erro na API %s %s: %r" % (method, parsed.path, e))
+            if not self.wfile.closed:
+                try:
+                    return self.send_json(500, {"error": "Erro interno"})
+                except Exception:
+                    pass
+
+    def _handle_api(self, method, parsed):
         path = parsed.path
         qs = parse_qs(parsed.query)
 
@@ -430,6 +659,124 @@ class Handler(BaseHTTPRequestHandler):
                     "por_status": por_status,
                     "stages": STAGES,
                 })
+
+        # Campanhas
+        if path == "/api/campaigns" and method == "GET":
+            with _lock:
+                return self.send_json(200, {
+                    "campaigns": list(_db.get("campaigns", [])),
+                    "settings": dict(_db.get("settings", {})),
+                })
+
+        if path == "/api/campaigns" and method == "POST":
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            nome = (body.get("nome") or "").strip()
+            if not nome:
+                return self.send_json(400, {"error": "Informe o nome da campanha"})
+            canal = body.get("canal") if body.get("canal") in CANAIS else "Meta"
+            with _lock:
+                codigo = (body.get("codigo") or "").strip().upper()
+                codigo = re.sub(r"[^A-Z0-9]", "", codigo)
+                if codigo:
+                    existing = {(c.get("codigo") or "").upper() for c in _db.get("campaigns", [])}
+                    if codigo in existing:
+                        return self.send_json(400, {"error": "Ja existe campanha com esse codigo"})
+                else:
+                    codigo = gen_codigo(nome)
+                camp = {
+                    "id": new_id(),
+                    "nome": nome,
+                    "canal": canal,
+                    "codigo": codigo,
+                    "keyword": (body.get("keyword") or "").strip(),
+                    "utm_campaign": (body.get("utm_campaign") or "").strip(),
+                    "ativo": True,
+                    "created_at": now_iso(),
+                }
+                _db.setdefault("campaigns", []).append(camp)
+                save_db()
+                return self.send_json(201, {"campaign": camp})
+
+        mc = re.match(r"^/api/campaigns/([^/]+)$", path)
+        if mc:
+            camp_id = mc.group(1)
+            body = None
+            if method in ("PATCH", "PUT"):
+                # le o corpo ANTES do lock: rfile.read e I/O de rede bloqueante
+                try:
+                    body = self.read_body()
+                except Exception:
+                    return self.send_json(400, {"error": "Corpo invalido"})
+            with _lock:
+                camp = next((c for c in _db.get("campaigns", []) if c["id"] == camp_id), None)
+                if not camp:
+                    return self.send_json(404, {"error": "Campanha nao encontrada"})
+                if method in ("PATCH", "PUT"):
+                    if "nome" in body and str(body["nome"]).strip():
+                        camp["nome"] = str(body["nome"]).strip()
+                    if body.get("canal") in CANAIS:
+                        camp["canal"] = body["canal"]
+                    if "keyword" in body:
+                        camp["keyword"] = str(body["keyword"]).strip()
+                    if "utm_campaign" in body:
+                        camp["utm_campaign"] = str(body["utm_campaign"]).strip()
+                    if "ativo" in body:
+                        camp["ativo"] = bool(body["ativo"])
+                    save_db()
+                    return self.send_json(200, {"campaign": camp})
+                if method == "DELETE":
+                    _db["campaigns"] = [c for c in _db.get("campaigns", []) if c["id"] != camp_id]
+                    # leads mantem o nome da campanha em texto; so desfaz o vinculo
+                    for l in _db["leads"]:
+                        if l.get("campanha_id") == camp_id:
+                            l["campanha_id"] = ""
+                    save_db()
+                    return self.send_json(200, {"ok": True})
+
+        # Configuracoes (numero do WhatsApp para gerar links de anuncio)
+        if path == "/api/settings" and method in ("PATCH", "PUT", "POST"):
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            with _lock:
+                st = _db.setdefault("settings", {})
+                if "whatsapp_number" in body:
+                    st["whatsapp_number"] = re.sub(r"[^0-9]", "", str(body["whatsapp_number"]))
+                save_db()
+                return self.send_json(200, {"settings": dict(st)})
+
+        # Relatorio por campanha (quantos leads/produtores/ganhos e R$ cada uma gerou)
+        if path == "/api/report/campanhas" and method == "GET":
+            with _lock:
+                camps = list(_db.get("campaigns", []))
+                rows = {c["id"]: {
+                    "id": c["id"], "nome": c["nome"], "canal": c.get("canal", ""),
+                    "codigo": c.get("codigo", ""), "ativo": c.get("ativo", True),
+                    "leads": 0, "produtores": 0, "ganhos": 0,
+                    "valor_ganho": 0.0, "valor_aberto": 0.0,
+                } for c in camps}
+                sem = {"id": "", "nome": "Sem campanha identificada", "canal": "",
+                       "codigo": "", "ativo": True, "leads": 0, "produtores": 0,
+                       "ganhos": 0, "valor_ganho": 0.0, "valor_aberto": 0.0}
+                for l in _db["leads"]:
+                    row = rows.get(l.get("campanha_id") or "", sem)
+                    row["leads"] += 1
+                    if l.get("tipo") == "produtor":
+                        row["produtores"] += 1
+                    valor = float(l.get("valor") or 0)
+                    if l.get("status") == "ganho":
+                        row["ganhos"] += 1
+                        row["valor_ganho"] += valor
+                    elif l.get("status") not in ("perdido", "prestador"):
+                        row["valor_aberto"] += valor
+                out = sorted(rows.values(), key=lambda r: r["leads"], reverse=True)
+                if sem["leads"]:
+                    out.append(sem)
+                return self.send_json(200, {"report": out})
 
         # Equipe (SDRs e vendedores)
         if path == "/api/members" and method == "GET":
@@ -456,15 +803,17 @@ class Handler(BaseHTTPRequestHandler):
         mm = re.match(r"^/api/members/([^/]+)$", path)
         if mm:
             member_id = mm.group(1)
+            body = None
+            if method in ("PATCH", "PUT"):
+                try:
+                    body = self.read_body()
+                except Exception:
+                    return self.send_json(400, {"error": "Corpo invalido"})
             with _lock:
                 member = next((x for x in _db.get("members", []) if x["id"] == member_id), None)
                 if not member:
                     return self.send_json(404, {"error": "Membro nao encontrado"})
                 if method in ("PATCH", "PUT"):
-                    try:
-                        body = self.read_body()
-                    except Exception:
-                        return self.send_json(400, {"error": "Corpo invalido"})
                     if "nome" in body and str(body["nome"]).strip():
                         member["nome"] = str(body["nome"]).strip()
                     if body.get("papel") in PAPEIS:
@@ -514,15 +863,17 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/leads/([^/]+)$", path)
         if m:
             lead_id = m.group(1)
+            body = None
+            if method in ("PATCH", "PUT"):
+                try:
+                    body = self.read_body()
+                except Exception:
+                    return self.send_json(400, {"error": "Corpo invalido"})
             with _lock:
                 lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
                 if not lead:
                     return self.send_json(404, {"error": "Lead nao encontrado"})
                 if method in ("PATCH", "PUT"):
-                    try:
-                        body = self.read_body()
-                    except Exception:
-                        return self.send_json(400, {"error": "Corpo invalido"})
                     apply_updates(lead, body)
                     save_db()
                     return self.send_json(200, {"lead": lead})

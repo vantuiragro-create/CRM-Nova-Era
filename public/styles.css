@@ -190,6 +190,7 @@ body {
   max-height: 92vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
 }
 .modal.narrow { width: 460px; }
+.modal.wide { width: 760px; }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 20px; border-bottom: 1px solid var(--line);
@@ -245,6 +246,45 @@ label input:focus, label select:focus, label textarea:focus {
 .team-add input { flex: 1; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .team-add select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .team-empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 10px; }
+
+/* ---------- Campanhas ---------- */
+.settings-row {
+  display: flex; align-items: flex-end; gap: 10px; margin-bottom: 14px;
+  background: #f6f8f6; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+}
+.settings-row label.inline { flex: 1; }
+.btn.small { padding: 8px 12px; font-size: 12.5px; }
+.btn.primary.small { background: var(--green-600); color: #fff; }
+.camp-add { display: grid; grid-template-columns: 2fr 1fr 1.4fr auto; gap: 8px; margin-bottom: 14px; }
+.camp-add input, .camp-add select {
+  font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+.camp-list { display: flex; flex-direction: column; gap: 10px; }
+.camp-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.camp-item.inactive { opacity: 0.55; }
+.camp-item .camp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.camp-item .cname { font-weight: 700; }
+.camp-code {
+  font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700;
+  background: var(--green-100); color: var(--green-700); border-radius: 6px; padding: 2px 7px;
+}
+.camp-item .camp-head .spacer { flex: 1; }
+.camp-link {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.camp-link input {
+  flex: 1; font: inherit; font-size: 12px; color: var(--muted);
+  padding: 7px 9px; border: 1px dashed var(--line); border-radius: 8px; background: #fafcfa;
+}
+.camp-link .lbl { font-size: 11px; font-weight: 700; color: var(--muted); width: 86px; flex-shrink: 0; }
+.camp-warn { font-size: 12px; color: var(--amber); margin-top: 6px; }
+.camp-report { overflow-x: auto; }
+.camp-report table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+.camp-report th, .camp-report td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.camp-report th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+.camp-report td.num, .camp-report th.num { text-align: right; }
+.camp-report tr.best td { background: #eafaf0; }
+.tag.campanha { background: #f3e8fd; color: var(--purple); }
 
 /* ---------- Toast ---------- */
 .toast {

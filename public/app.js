@@ -15,6 +15,8 @@ let STAGES = ['novo', 'triagem', 'produtor', 'negociacao', 'proposta', 'ganho', 
 
 let leadsCache = [];
 let members = [];
+let campaigns = [];
+let settings = {};
 let currentFilters = { q: '', canal: '', lane: '' };
 
 // ---------------------------------------------------------------------------
@@ -84,6 +86,12 @@ async function loadMembers() {
   members = data.members || [];
 }
 
+async function loadCampaigns() {
+  const data = await api('/api/campaigns');
+  campaigns = data.campaigns || [];
+  settings = data.settings || {};
+}
+
 async function loadLeads() {
   const params = new URLSearchParams();
   if (currentFilters.q) params.set('q', currentFilters.q);
@@ -95,8 +103,17 @@ async function loadLeads() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadStats(), loadMembers()]);
-  await loadLeads();
+  // uma falha transitória não pode impedir o load dos leads nem virar
+  // unhandled rejection no setInterval
+  try {
+    await Promise.all([loadStats(), loadMembers(), loadCampaigns()]);
+    await loadLeads();
+    return true;
+  } catch (err) {
+    console.error('Falha ao atualizar:', err);
+    try { await loadLeads(); } catch (_) { /* servidor fora */ }
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +156,8 @@ function updateLaneFilter(lanes) {
 function renderBoard() {
   const board = $('#swimboard');
   board.innerHTML = '';
+  // o nº de colunas segue as etapas vindas do servidor (não fixar no CSS)
+  board.style.gridTemplateColumns = `var(--lane-w) repeat(${STAGES.length}, var(--col-w))`;
 
   let lanes = buildLanes();
   updateLaneFilter(lanes);
@@ -220,6 +239,7 @@ function renderCard(lead) {
 
   const tags = el('div', 'tags');
   if (lead.origem_canal) tags.append(el('span', `tag canal ${lead.origem_canal}`, lead.origem_canal));
+  if (lead.campanha) tags.append(el('span', 'tag campanha', '📣 ' + lead.campanha));
   if (lead.valor > 0) tags.append(el('span', 'tag valor', brl(lead.valor)));
   if (tags.children.length) card.append(tags);
 
@@ -293,10 +313,26 @@ function openModal(lead) {
   for (const s of STAGES) st.append(new Option(STAGE_LABELS[s] || s, s));
   st.value = lead.status || 'novo';
 
+  // select de campanha cadastrada (se o vínculo apontar para campanha que não
+  // está na lista, injeta a opção para o valor não se perder num Salvar)
+  const cs = $('#campanhaSelect');
+  cs.innerHTML = '';
+  cs.append(new Option('—', ''));
+  for (const c of campaigns) cs.append(new Option(`${c.nome} (#${c.codigo})`, c.id));
+  if (lead.campanha_id && !campaigns.some((c) => c.id === lead.campanha_id)) {
+    cs.append(new Option((lead.campanha || 'Campanha') + ' (removida)', lead.campanha_id));
+  }
+  cs.value = lead.campanha_id || '';
+
   // tipo (radio)
   for (const r of form.querySelectorAll('[name=tipo]')) r.checked = (r.value === (lead.tipo || ''));
 
   form.id.value = lead.id || '';
+  // canal fora da lista fixa (ex.: utm_source cru vindo do webhook): injeta a
+  // opção — senão o select fica vazio e o Salvar apagaria o canal
+  if (lead.origem_canal && ![...form.origem_canal.options].some((o) => o.value === lead.origem_canal)) {
+    form.origem_canal.append(new Option(lead.origem_canal, lead.origem_canal));
+  }
   const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'produto', 'valor',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
@@ -311,21 +347,38 @@ function openModal(lead) {
     if (lead.last_message) meta.append(el('div', null, 'Última mensagem: "' + String(lead.last_message).slice(0, 120) + '"'));
     if (lead.created_at) meta.append(el('div', null, 'Entrou em ' + new Date(lead.created_at).toLocaleString('pt-BR')));
   }
+  modalInitial = collectFormValues();
   $('#modalBackdrop').hidden = false;
 }
 
-function closeModal() { $('#modalBackdrop').hidden = true; }
+function closeModal() {
+  $('#modalBackdrop').hidden = true;
+  refreshAll(); // recupera o que o webhook trouxe enquanto o modal pausava o refresh
+}
 
-async function saveLead() {
-  const data = {};
+function collectFormValues() {
+  const vals = {};
   for (const field of form.elements) {
     if (!field.name || field.name === 'id') continue;
-    if (field.type === 'radio') { if (field.checked) data[field.name] = field.value; }
-    else data[field.name] = field.value;
+    if (field.type === 'radio') { if (field.checked) vals[field.name] = field.value; }
+    else vals[field.name] = field.value;
   }
+  return vals;
+}
+let modalInitial = {};
+
+async function saveLead() {
+  const all = collectFormValues();
   const id = form.id.value;
+  // Envia SÓ o que o usuário alterou: mandar o formulário inteiro reverteria
+  // campos que o webhook atualizou enquanto o modal estava aberto.
+  const data = {};
+  for (const [k, v] of Object.entries(all)) {
+    if (!id || v !== (modalInitial[k] !== undefined ? modalInitial[k] : '')) data[k] = v;
+  }
   try {
     if (id) {
+      if (Object.keys(data).length === 0) { closeModal(); return; }
       await api('/api/leads/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(data) });
       toast('Lead atualizado');
     } else {
@@ -333,7 +386,6 @@ async function saveLead() {
       toast('Lead criado');
     }
     closeModal();
-    refreshAll();
   } catch (err) { toast('Erro ao salvar: ' + err.message); }
 }
 
@@ -345,9 +397,153 @@ async function deleteLead() {
     await api('/api/leads/' + encodeURIComponent(id), { method: 'DELETE' });
     closeModal();
     toast('Lead excluído');
-    refreshAll();
   } catch (err) { toast('Erro ao excluir: ' + err.message); }
 }
+
+// ---------------------------------------------------------------------------
+// Campanhas
+// ---------------------------------------------------------------------------
+function waLink(camp) {
+  const num = String(settings.whatsapp_number || '').replace(/\D/g, '');
+  if (!num) return '';
+  const msg = `Olá! Vi o anúncio "${camp.nome}" e quero mais informações. #${camp.codigo}`;
+  return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+}
+
+function utmSuffix(camp) {
+  const srcPorCanal = { Meta: 'facebook', Google: 'google', TikTok: 'tiktok', WhatsApp: 'whatsapp' };
+  const src = srcPorCanal[camp.canal] || 'outro';
+  return `?utm_source=${src}&utm_medium=cpc&utm_campaign=${encodeURIComponent(camp.codigo)}`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copiado! Cole no seu anúncio.'); }
+  catch (e) { prompt('Copie manualmente (Ctrl/Cmd+C):', text); }
+}
+
+function linkRow(label, value) {
+  const row = el('div', 'camp-link');
+  row.append(el('span', 'lbl', label));
+  const inp = document.createElement('input');
+  inp.readOnly = true;
+  inp.value = value;
+  inp.addEventListener('focus', () => inp.select());
+  const btn = el('button', 'btn ghost small', 'Copiar');
+  btn.style.background = 'var(--green-100)';
+  btn.style.color = 'var(--green-700)';
+  btn.type = 'button';
+  btn.onclick = () => copyText(value);
+  row.append(inp, btn);
+  return row;
+}
+
+function renderCampaigns() {
+  $('#waNumber').value = settings.whatsapp_number || '';
+  const list = $('#campList');
+  list.innerHTML = '';
+  if (campaigns.length === 0) {
+    list.append(el('div', 'team-empty', 'Nenhuma campanha cadastrada ainda. Adicione a primeira acima. 👆'));
+    return;
+  }
+  for (const c of campaigns) {
+    const item = el('div', 'camp-item' + (c.ativo === false ? ' inactive' : ''));
+    const head = el('div', 'camp-head');
+    head.append(el('span', 'cname', c.nome));
+    head.append(el('span', 'camp-code', '#' + c.codigo));
+    head.append(el('span', `tag canal ${c.canal}`, c.canal));
+    if (c.keyword) head.append(el('span', 'tag', '🔑 ' + c.keyword));
+    head.append(el('span', 'spacer'));
+    const toggle = el('button', 'icon-btn', c.ativo === false ? '☑️' : '✅');
+    toggle.title = c.ativo === false ? 'Reativar' : 'Pausar (para de atribuir leads novos)';
+    toggle.type = 'button';
+    toggle.onclick = async () => {
+      await api('/api/campaigns/' + c.id, { method: 'PATCH', body: JSON.stringify({ ativo: c.ativo === false }) });
+      await loadCampaigns(); renderCampaigns();
+    };
+    const del = el('button', 'icon-btn', '🗑️');
+    del.title = 'Excluir campanha (os leads dela não são apagados)';
+    del.type = 'button';
+    del.onclick = async () => {
+      if (!confirm(`Excluir a campanha "${c.nome}"? Os leads continuam no quadro, só perdem o vínculo.`)) return;
+      await api('/api/campaigns/' + c.id, { method: 'DELETE' });
+      await loadCampaigns(); renderCampaigns(); renderCampReport();
+    };
+    head.append(toggle, del);
+    item.append(head);
+
+    const wl = waLink(c);
+    if (wl) {
+      item.append(linkRow('Link p/ anúncio', wl));
+    } else {
+      item.append(el('div', 'camp-warn', '⚠️ Salve seu número de WhatsApp acima para gerar o link do anúncio.'));
+    }
+    item.append(linkRow('Landing (UTM)', 'https://SEU-SITE' + utmSuffix(c)));
+    list.append(item);
+  }
+}
+
+async function renderCampReport() {
+  const box = $('#campReport');
+  // token de sequência: duas chamadas em voo não podem empilhar duas tabelas
+  const seq = (renderCampReport._seq = (renderCampReport._seq || 0) + 1);
+  try {
+    const data = await api('/api/report/campanhas');
+    if (seq !== renderCampReport._seq) return; // há chamada mais recente
+    box.innerHTML = '';
+    const rows = data.report || [];
+    if (!rows.length) { box.append(el('div', 'team-empty', 'Sem dados ainda.')); return; }
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>Campanha</th><th>Canal</th>' +
+      '<th class="num">Leads</th><th class="num">Produtores</th><th class="num">Ganhos</th>' +
+      '<th class="num">R$ ganho</th><th class="num">R$ em aberto</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    let bestMarked = false;
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      if (!bestMarked && r.id && r.leads > 0) { tr.className = 'best'; bestMarked = true; }
+      const cells = [
+        r.nome + (r.codigo ? ` (#${r.codigo})` : ''), r.canal || '—',
+        r.leads, r.produtores, r.ganhos, brl(r.valor_ganho), brl(r.valor_aberto),
+      ];
+      cells.forEach((v, i) => {
+        const td = document.createElement('td');
+        if (i >= 2) td.className = 'num';
+        td.textContent = String(v);
+        tr.append(td);
+      });
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    box.append(table);
+  } catch (err) {
+    if (seq !== renderCampReport._seq) return;
+    box.innerHTML = '';
+    box.append(el('div', 'team-empty', 'Erro ao carregar o relatório.'));
+  }
+}
+
+$('#campForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nome = e.target.nome.value.trim();
+  if (!nome) return;
+  try {
+    const res = await api('/api/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({ nome, canal: e.target.canal.value, keyword: e.target.keyword.value.trim() }),
+    });
+    e.target.nome.value = ''; e.target.keyword.value = '';
+    await loadCampaigns(); renderCampaigns(); renderCampReport();
+    toast(`Campanha criada — código #${res.campaign.codigo}`);
+  } catch (err) { toast('Erro: ' + err.message); }
+});
+
+$('#btnSaveWa').addEventListener('click', async () => {
+  try {
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ whatsapp_number: $('#waNumber').value }) });
+    await loadCampaigns(); renderCampaigns();
+    toast('Número salvo — links dos anúncios atualizados');
+  } catch (err) { toast('Erro: ' + err.message); }
+});
 
 // ---------------------------------------------------------------------------
 // Equipe
@@ -400,7 +596,17 @@ $('#teamForm').addEventListener('submit', async (e) => {
 // Eventos globais
 // ---------------------------------------------------------------------------
 $('#btnNew').addEventListener('click', () => openModal(null));
-$('#btnRefresh').addEventListener('click', () => { refreshAll(); toast('Atualizado'); });
+$('#btnRefresh').addEventListener('click', async () => {
+  toast((await refreshAll()) ? 'Atualizado' : 'Erro ao atualizar — o servidor está no ar?');
+});
+$('#btnCampaigns').addEventListener('click', () => {
+  renderCampaigns(); renderCampReport();
+  $('#campBackdrop').hidden = false;
+});
+$('#campClose').addEventListener('click', () => { $('#campBackdrop').hidden = true; refreshAll(); });
+$('#campBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#campBackdrop')) { $('#campBackdrop').hidden = true; refreshAll(); }
+});
 $('#btnTeam').addEventListener('click', () => { renderTeam(); $('#teamBackdrop').hidden = false; });
 $('#teamClose').addEventListener('click', () => { $('#teamBackdrop').hidden = true; });
 $('#teamBackdrop').addEventListener('click', (e) => { if (e.target === $('#teamBackdrop')) $('#teamBackdrop').hidden = true; });
@@ -412,7 +618,8 @@ $('#modalBackdrop').addEventListener('click', (e) => { if (e.target === $('#moda
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('#modalBackdrop').hidden) closeModal();
-  if (!$('#teamBackdrop').hidden) $('#teamBackdrop').hidden = true;
+  if (!$('#teamBackdrop').hidden) { $('#teamBackdrop').hidden = true; refreshAll(); }
+  if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
 });
 
 let searchTimer = null;
@@ -428,8 +635,12 @@ let _toastedOnce = false;
 function toastOnce(msg) { if (_toastedOnce) return; _toastedOnce = true; toast(msg); }
 
 // Atualização automática a cada 15s (pega leads novos do webhook).
-setInterval(() => {
-  if ($('#modalBackdrop').hidden && $('#teamBackdrop').hidden) refreshAll();
+// Só pausa durante a edição de um lead; com o painel de Campanhas aberto o
+// quadro e o relatório continuam vivos (o formulário do painel não é tocado).
+setInterval(async () => {
+  if (!$('#modalBackdrop').hidden) return;
+  await refreshAll();
+  if (!$('#campBackdrop').hidden) renderCampReport();
 }, 15000);
 
 refreshAll();
