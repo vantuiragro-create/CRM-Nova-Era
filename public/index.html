@@ -3,27 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CRM Agro — Leads do Chatwoot</title>
+  <title>CRM Nova Era Drones</title>
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>" />
+  <link rel="icon" href="brand/favicon.png" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">🌱</span>
+      <img class="logo-img" src="brand/icone.png" alt="Nova Era Drones" />
       <div>
-        <h1>CRM Agro</h1>
-        <p class="sub">Leads do Chatwoot · SDR → Vendedor</p>
+        <h1>CRM <span class="brand-accent">Nova Era</span></h1>
+        <p class="sub">Drones DJI Agras · Leads do Chatwoot</p>
       </div>
     </div>
     <div class="stats" id="stats"><!-- preenchido via JS --></div>
     <div class="actions">
-      <button class="btn ghost" id="btnImport" title="Importar leads em massa">⬆️ Importar</button>
-      <button class="btn ghost" id="btnCampaigns" title="Campanhas">📣 Campanhas</button>
-      <button class="btn ghost" id="btnTeam" title="Equipe">👥 Equipe</button>
+      <span class="user-chip" id="userChip"></span>
+      <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar</button>
+      <button class="btn ghost" id="btnCampaigns" title="Campanhas" hidden>📣 Campanhas</button>
+      <button class="btn ghost" id="btnUsers" title="Usuários e acessos" hidden>👥 Usuários</button>
       <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
       <button class="btn primary" id="btnNew">+ Novo lead</button>
+      <button class="btn ghost" id="btnLogout" title="Sair">Sair</button>
     </div>
   </header>
 
@@ -233,24 +235,30 @@
     </div>
   </div>
 
-  <!-- Modal da Equipe -->
+  <!-- Modal de Usuários e níveis de acesso (só administrador) -->
   <div class="modal-backdrop" id="teamBackdrop" hidden>
-    <div class="modal narrow" role="dialog" aria-modal="true">
+    <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Equipe</h2>
+        <h2>👥 Usuários e níveis de acesso</h2>
         <button class="icon-btn" id="teamClose" aria-label="Fechar">✕</button>
       </div>
       <div class="modal-body">
-        <p class="muted-note">Cadastre seus SDRs e vendedores. Os leads novos do Chatwoot são
-          distribuídos automaticamente entre os SDRs ativos (rodízio).</p>
+        <p class="muted-note"><b>Níveis:</b> SDR vê só os leads dele · Vendedor vê os leads
+          qualificados dele (e os sem responsável, para assumir) · Gerente vê tudo ·
+          Administrador vê tudo e gerencia estes acessos. Leads novos do Chatwoot entram em
+          rodízio entre os SDRs ativos.</p>
         <div id="teamList" class="team-list"><!-- via JS --></div>
-        <form id="teamForm" class="team-add">
-          <input name="nome" placeholder="Nome da pessoa" required />
+        <form id="teamForm" class="user-add">
+          <input name="nome" placeholder="Nome" required />
+          <input name="login" placeholder="login (opcional)" />
+          <input name="senha" type="password" placeholder="senha (mín. 6)" required />
           <select name="papel">
             <option value="sdr">SDR</option>
             <option value="vendedor">Vendedor</option>
+            <option value="gerente">Gerente</option>
+            <option value="admin">Administrador</option>
           </select>
-          <button class="btn primary" type="submit">Adicionar</button>
+          <button class="btn primary" type="submit">Criar usuário</button>
         </form>
       </div>
     </div>

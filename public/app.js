@@ -51,6 +51,7 @@ let leadsCache = [];
 let members = [];
 let campaigns = [];
 let settings = {};
+let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
 let currentFilters = { q: '', canal: '', lane: '' };
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,10 @@ function toast(msg) {
 
 async function api(path, opts) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) {
+    window.location.href = 'login.html'; // sessão expirou: volta pro login
+    throw new Error('Sessão expirada');
+  }
   if (!res.ok) {
     let msg = 'Erro na requisição';
     try { msg = (await res.json()).error || msg; } catch (_) {}
@@ -376,9 +381,11 @@ async function refreshAll() {
 // ---------------------------------------------------------------------------
 function buildLanes(funil, leadsFunil) {
   // Raias = pessoas do papel deste funil (SDRs no funil SDR, vendedores no de Vendas)
-  const lanes = members
-    .filter((m) => m.ativo !== false && m.papel === funil.papel)
-    .map((m) => ({ key: m.nome, nome: m.nome, papel: m.papel }));
+  let pessoas = members.filter((m) => m.ativo !== false && m.papel === funil.papel);
+  // SDR/vendedor enxergam apenas a própria raia (o servidor já filtra os
+  // leads; aqui escondemos as raias vazias dos colegas)
+  if (me && me.papel === funil.papel) pessoas = pessoas.filter((m) => m.nome === me.nome);
+  const lanes = pessoas.map((m) => ({ key: m.nome, nome: m.nome, papel: m.papel }));
   const seen = new Set(lanes.map((l) => l.key));
   // Donos que aparecem nos leads mas não são membros ativos (ex.: desativados)
   for (const l of leadsFunil) {
@@ -435,8 +442,8 @@ function renderBoard() {
     }
   }
 
-  if (members.length === 0) {
-    toastOnce('Cadastre seus SDRs e vendedores em 👥 Equipe para ativar o rodízio de leads.');
+  if (members.length === 0 && me && me.papel === 'admin') {
+    toastOnce('Crie os usuários da equipe em 👥 Usuários para ativar o rodízio de leads.');
   }
 }
 
@@ -877,49 +884,95 @@ $('#btnImportRun').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Equipe
+// Usuários e níveis de acesso (só administrador)
 // ---------------------------------------------------------------------------
-function renderTeam() {
+const PAPEL_LABEL = { admin: 'Admin', gerente: 'Gerente', vendedor: 'Vendedor', sdr: 'SDR' };
+
+async function renderTeam() {
   const list = $('#teamList');
   list.innerHTML = '';
-  if (members.length === 0) {
-    list.append(el('div', 'team-empty', 'Nenhuma pessoa cadastrada ainda.'));
+  let users = [];
+  try {
+    users = (await api('/api/users')).users || [];
+  } catch (err) {
+    list.append(el('div', 'team-empty', err.message));
     return;
   }
-  const order = { sdr: 0, vendedor: 1 };
-  const sorted = [...members].sort((a, b) => (order[a.papel] - order[b.papel]) || a.nome.localeCompare(b.nome));
-  for (const m of sorted) {
-    const row = el('div', 'team-row' + (m.ativo === false ? ' inactive' : ''));
-    row.append(el('span', 'tname', m.nome));
-    row.append(el('span', `role-badge ${m.papel}`, m.papel === 'sdr' ? 'SDR' : 'Vendedor'));
-    const toggle = el('button', 'icon-btn', m.ativo === false ? '☑️' : '✅');
-    toggle.title = m.ativo === false ? 'Reativar' : 'Desativar';
+  const order = { admin: 0, gerente: 1, vendedor: 2, sdr: 3 };
+  users.sort((a, b) => (order[a.papel] - order[b.papel]) || a.nome.localeCompare(b.nome));
+  for (const u of users) {
+    const row = el('div', 'team-row' + (u.ativo === false ? ' inactive' : ''));
+    const info = el('span', 'tname');
+    info.append(document.createTextNode(u.nome + ' '));
+    info.append(el('small', 'tlogin', '@' + u.login + (u.senha_definida ? '' : ' · SEM SENHA')));
+    row.append(info);
+    row.append(el('span', `role-badge ${u.papel === 'sdr' || u.papel === 'vendedor' ? u.papel : 'outro'}`, PAPEL_LABEL[u.papel] || u.papel));
+
+    const nivel = document.createElement('select');
+    for (const p of ['sdr', 'vendedor', 'gerente', 'admin']) nivel.append(new Option(PAPEL_LABEL[p], p));
+    nivel.value = u.papel;
+    nivel.title = 'Nível de acesso';
+    nivel.onchange = async () => {
+      try {
+        await api('/api/users/' + u.id, { method: 'PATCH', body: JSON.stringify({ papel: nivel.value }) });
+        toast('Nível de ' + u.nome + ' → ' + PAPEL_LABEL[nivel.value]);
+      } catch (err) { toast('Erro: ' + err.message); }
+      await loadMembers(); renderTeam(); renderBoard();
+    };
+    row.append(nivel);
+
+    const senha = el('button', 'icon-btn', '🔑');
+    senha.title = 'Definir nova senha';
+    senha.type = 'button';
+    senha.onclick = async () => {
+      const nova = prompt('Nova senha para ' + u.nome + ' (mínimo 6 caracteres):');
+      if (!nova) return;
+      try {
+        await api('/api/users/' + u.id, { method: 'PATCH', body: JSON.stringify({ senha: nova }) });
+        toast('Senha de ' + u.nome + ' atualizada');
+        renderTeam();
+      } catch (err) { toast('Erro: ' + err.message); }
+    };
+    const toggle = el('button', 'icon-btn', u.ativo === false ? '☑️' : '✅');
+    toggle.title = u.ativo === false ? 'Reativar' : 'Desativar (bloqueia o login)';
+    toggle.type = 'button';
     toggle.onclick = async () => {
-      await api('/api/members/' + m.id, { method: 'PATCH', body: JSON.stringify({ ativo: m.ativo === false }) });
+      try {
+        await api('/api/users/' + u.id, { method: 'PATCH', body: JSON.stringify({ ativo: u.ativo === false }) });
+      } catch (err) { toast('Erro: ' + err.message); }
       await loadMembers(); renderTeam(); renderBoard();
     };
     const del = el('button', 'icon-btn', '🗑️');
-    del.title = 'Remover';
+    del.title = 'Excluir usuário';
+    del.type = 'button';
     del.onclick = async () => {
-      if (!confirm(`Remover ${m.nome} da equipe?`)) return;
-      await api('/api/members/' + m.id, { method: 'DELETE' });
+      if (!confirm(`Excluir o usuário ${u.nome}? Os leads dele continuam no quadro.`)) return;
+      try {
+        await api('/api/users/' + u.id, { method: 'DELETE' });
+      } catch (err) { toast('Erro: ' + err.message); }
       await loadMembers(); renderTeam(); renderBoard();
     };
-    row.append(toggle, del);
+    row.append(senha, toggle, del);
     list.append(row);
   }
 }
 
 $('#teamForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const nome = e.target.nome.value.trim();
-  const papel = e.target.papel.value;
-  if (!nome) return;
+  const f = e.target;
   try {
-    await api('/api/members', { method: 'POST', body: JSON.stringify({ nome, papel }) });
-    e.target.nome.value = '';
+    await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: f.nome.value.trim(),
+        login: f.login.value.trim(),
+        senha: f.senha.value,
+        papel: f.papel.value,
+      }),
+    });
+    f.nome.value = ''; f.login.value = ''; f.senha.value = '';
     await loadMembers(); renderTeam(); renderBoard();
-    toast('Adicionado à equipe');
+    toast('Usuário criado');
   } catch (err) { toast('Erro: ' + err.message); }
 });
 
@@ -938,7 +991,11 @@ $('#campClose').addEventListener('click', () => { $('#campBackdrop').hidden = tr
 $('#campBackdrop').addEventListener('click', (e) => {
   if (e.target === $('#campBackdrop')) { $('#campBackdrop').hidden = true; refreshAll(); }
 });
-$('#btnTeam').addEventListener('click', () => { renderTeam(); $('#teamBackdrop').hidden = false; });
+$('#btnUsers').addEventListener('click', () => { renderTeam(); $('#teamBackdrop').hidden = false; });
+$('#btnLogout').addEventListener('click', async () => {
+  try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
+  window.location.href = 'login.html';
+});
 $('#teamClose').addEventListener('click', () => { $('#teamBackdrop').hidden = true; });
 $('#teamBackdrop').addEventListener('click', (e) => { if (e.target === $('#teamBackdrop')) $('#teamBackdrop').hidden = true; });
 $('#modalClose').addEventListener('click', closeModal);
@@ -982,9 +1039,36 @@ function toastOnce(msg) { if (_toastedOnce) return; _toastedOnce = true; toast(m
 // Só pausa durante a edição de um lead; com o painel de Campanhas aberto o
 // quadro e o relatório continuam vivos (o formulário do painel não é tocado).
 setInterval(async () => {
+  if (!me) return; // ainda sem login
   if (!$('#modalBackdrop').hidden) return;
   await refreshAll();
   if (!$('#campBackdrop').hidden) renderCampReport();
 }, 15000);
 
-refreshAll();
+// ---------------------------------------------------------------------------
+// Início: exige login e adapta a interface ao nível de acesso
+// ---------------------------------------------------------------------------
+function applyRoleUI() {
+  const gestor = me.papel === 'admin' || me.papel === 'gerente';
+  $('#userChip').textContent = `👤 ${me.nome} · ${PAPEL_LABEL[me.papel] || me.papel}`;
+  $('#btnImport').hidden = !gestor;
+  $('#btnCampaigns').hidden = !gestor;
+  $('#btnUsers').hidden = me.papel !== 'admin';
+  // vendedor não tem nada no funil SDR; entra direto no de Vendas
+  if (me.papel === 'vendedor') {
+    $('#tabSDR').hidden = true;
+    currentView = 'vendas';
+    $('#tabSDR').classList.remove('active');
+    $('#tabVendas').classList.add('active');
+  }
+}
+
+(async () => {
+  try {
+    me = (await api('/api/me')).user;
+  } catch (_) {
+    return; // api() já redirecionou para o login
+  }
+  applyRoleUI();
+  refreshAll();
+})();

@@ -30,7 +30,21 @@ Para **parar**, feche a janela do terminal ou aperte `Ctrl + C`.
 
 ---
 
-## 2. Usando o painel
+## 2. Login e níveis de acesso
+
+O CRM exige **login e senha**. No primeiro boot é criado o usuário
+**admin / novaera123** (o terminal mostra) — troque a senha em **👥 Usuários**.
+
+| Nível | O que enxerga / pode fazer |
+|---|---|
+| **SDR** | Só os leads dele (funil SDR); cadastra leads para si |
+| **Vendedor** | Só o funil de Vendas: leads dele + "Sem responsável" (para assumir) |
+| **Gerente** | Tudo: funis, mapa, campanhas, importação, relatórios |
+| **Administrador** | Tudo + cria usuários, define senhas e níveis de acesso |
+
+O webhook do Chatwoot não usa login (continua protegido pelo token na URL).
+
+## 3. Usando o painel
 
 **Primeiro passo — cadastre a equipe:** clique em **👥 Equipe** e adicione seus
 **SDRs** e **vendedores**. Os leads novos do Chatwoot são distribuídos

@@ -51,8 +51,17 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 #                         prestador = fora do perfil)
 STAGES = ["novo", "triagem", "produtor", "negociacao", "proposta", "ganho", "perdido", "prestador"]
 
-# Papeis da equipe
+# Papeis da equipe (raias dos funis)
 PAPEIS = ("sdr", "vendedor")
+
+# Papeis de usuario (login):
+#   admin    -> tudo + gerencia usuarios e niveis de acesso
+#   gerente  -> tudo, exceto gerenciar usuarios
+#   vendedor -> so leads do funil de Vendas que sao dele ou sem responsavel
+#   sdr      -> so os leads dele (campo sdr)
+PAPEIS_USUARIO = ("admin", "gerente", "vendedor", "sdr")
+
+SESSAO_DIAS = 30
 
 EDITABLE = {
     "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
@@ -104,9 +113,10 @@ MIME = {
 # Camada de dados (JSON em arquivo + lock para acesso concorrente)
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
-# members: equipe (SDRs e vendedores) | rr_sdr: indice do rodizio de SDRs
-# campaigns: campanhas cadastradas (atribuicao) | settings: config (nro WhatsApp)
-_db = {"leads": [], "members": [], "rr_sdr": 0, "campaigns": [], "settings": {}}
+# users: pessoas com login (a equipe: admin/gerente/vendedor/sdr)
+# rr_sdr: indice do rodizio de SDRs | campaigns: campanhas | settings: config
+# sessions: sessoes de login ativas (token -> user_id/validade)
+_db = {"leads": [], "users": [], "rr_sdr": 0, "campaigns": [], "settings": {}, "sessions": {}}
 
 
 def now_iso():
@@ -125,14 +135,27 @@ def load_db():
                 data = json.load(f)
             if not isinstance(data.get("leads"), list):
                 data["leads"] = []
-            if not isinstance(data.get("members"), list):
-                data["members"] = []
+            if not isinstance(data.get("users"), list):
+                data["users"] = []
             if not isinstance(data.get("rr_sdr"), int):
                 data["rr_sdr"] = 0
             if not isinstance(data.get("campaigns"), list):
                 data["campaigns"] = []
             if not isinstance(data.get("settings"), dict):
                 data["settings"] = {}
+            if not isinstance(data.get("sessions"), dict):
+                data["sessions"] = {}
+            # Migracao: a antiga "equipe" (members, sem login) vira usuarios com
+            # senha pendente — o admin define a senha de cada um.
+            if data.get("members") and not data["users"]:
+                for m in data.pop("members"):
+                    data["users"].append({
+                        "id": m.get("id") or new_id(), "nome": m.get("nome", ""),
+                        "login": _slug_login(m.get("nome", "")), "salt": "", "senha_hash": "",
+                        "papel": m.get("papel", "sdr"), "ativo": m.get("ativo", True),
+                    })
+                print("  equipe antiga migrada para usuarios (defina as senhas no painel)")
+            data.pop("members", None)
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -283,30 +306,25 @@ def norm_phone(v):
 
 
 def _canon_br(d):
-    """Forma canonica para comparacao de numero brasileiro: remove o DDI 55 e
-    o 9º dígito do celular (o WhatsApp ora inclui, ora omite esse 9)."""
+    """Forma canonica para comparacao de numero brasileiro: remove o DDI 55,
+    o 0 de tronco e o 9º dígito do celular (o WhatsApp ora inclui, ora omite)."""
     if d.startswith("55") and len(d) in (12, 13):
         d = d[2:]
+    if d.startswith("0") and len(d) in (11, 12):  # 0 + DDD + numero
+        d = d[1:]
     if len(d) == 11 and d[2] == "9":  # DDD + 9 + 8 digitos
         d = d[:2] + d[3:]
     return d
 
 
 def same_phone(a, b):
-    """Mesmo numero ignorando formatacao, +55/DDD e o 9º dígito do celular."""
+    """Mesmo numero ignorando formatacao, +55/0/DDD e o 9º dígito do celular.
+    Comparacao por igualdade canonica — sem casamento por sufixo, que mesclava
+    numeros internacionais parecidos com numeros brasileiros."""
     da, db = norm_phone(a), norm_phone(b)
     if not da or not db:
         return False
-    if da == db:
-        return True
-    ca, cb = _canon_br(da), _canon_br(db)
-    if ca == cb:
-        return True
-    # tolera um numero gravado com DDD e outro sem, desde que a parte comum
-    # seja longa o bastante para nao confundir clientes diferentes
-    if min(len(ca), len(cb)) >= 10:
-        return ca.endswith(cb) or cb.endswith(ca)
-    return False
+    return da == db or _canon_br(da) == _canon_br(db)
 
 
 def find_duplicado(telefone, email, exclude_id=None):
@@ -436,10 +454,94 @@ def importar_csv(texto):
     return criados, rejeitados
 
 
+# ---------------------------------------------------------------------------
+# Usuarios, senhas e sessoes
+# ---------------------------------------------------------------------------
+def _slug_login(nome):
+    s = unicodedata.normalize("NFD", str(nome or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9.]", "", s.lower().replace(" ", ".")) or "usuario"
+
+
+def hash_senha(senha, salt=None):
+    salt = salt or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", str(senha).encode(), bytes.fromhex(salt), 120000).hex()
+    return salt, h
+
+
+def verifica_senha(user, senha):
+    if not user.get("senha_hash") or not user.get("salt"):
+        return False  # senha ainda nao definida pelo admin
+    _, h = hash_senha(senha, user["salt"])
+    return secrets.compare_digest(h, user["senha_hash"])
+
+
+def ensure_admin():
+    """Garante que exista ao menos um administrador para dar o primeiro acesso."""
+    if any(u.get("papel") == "admin" for u in _db["users"]):
+        return None
+    senha = "novaera123"
+    salt, h = hash_senha(senha)
+    _db["users"].append({
+        "id": new_id(), "nome": "Administrador", "login": "admin",
+        "salt": salt, "senha_hash": h, "papel": "admin", "ativo": True,
+    })
+    save_db()
+    return senha
+
+
+def cria_sessao(user_id):
+    token = secrets.token_urlsafe(32)
+    _db["sessions"][token] = {"user_id": user_id, "exp": time.time() + SESSAO_DIAS * 86400}
+    # faxina de sessoes vencidas
+    agora = time.time()
+    _db["sessions"] = {t: s for t, s in _db["sessions"].items() if s.get("exp", 0) > agora}
+    save_db()
+    return token
+
+
+def usuario_da_sessao(token):
+    if not token:
+        return None
+    s = _db.get("sessions", {}).get(token)
+    if not s or s.get("exp", 0) < time.time():
+        return None
+    u = next((x for x in _db["users"] if x["id"] == s["user_id"]), None)
+    if not u or not u.get("ativo", True):
+        return None
+    return u
+
+
+def user_publico(u):
+    return {"id": u["id"], "nome": u["nome"], "login": u["login"],
+            "papel": u["papel"], "ativo": u.get("ativo", True),
+            "senha_definida": bool(u.get("senha_hash"))}
+
+
+# ---------------------------------------------------------------------------
+# Permissoes por papel
+# ---------------------------------------------------------------------------
+VENDAS_STATUSES = ("produtor", "negociacao", "proposta", "ganho")
+
+
+def pode_ver_lead(user, lead):
+    p = user.get("papel")
+    if p in ("admin", "gerente"):
+        return True
+    if p == "sdr":
+        return lead.get("sdr") == user.get("nome")
+    if p == "vendedor":
+        no_funil_vendas = lead.get("status") in VENDAS_STATUSES or (
+            lead.get("status") == "perdido" and lead.get("tipo") == "produtor")
+        dono = str(lead.get("vendedor") or "").strip()
+        return no_funil_vendas and dono in ("", user.get("nome"))
+    return False
+
+
 def active_members(papel=None):
-    out = [m for m in _db.get("members", []) if m.get("ativo", True)]
+    """Equipe = usuarios ativos com papel de raia (sdr/vendedor)."""
+    out = [u for u in _db.get("users", []) if u.get("ativo", True) and u.get("papel") in PAPEIS]
     if papel:
-        out = [m for m in out if m.get("papel") == papel]
+        out = [u for u in out if u.get("papel") == papel]
     return out
 
 
@@ -732,14 +834,19 @@ def handle_chatwoot_event(payload):
         if conversation_id is not None:
             lead = next((l for l in _db["leads"] if l.get("chatwoot_conversation_id") == conversation_id), None)
 
-        # Cliente conhecido abrindo conversa NOVA: reconhece pelo id do contato
-        # ou pelo telefone e atualiza o lead existente em vez de duplicar
+        # Cliente conhecido abrindo conversa NOVA: reconhece pelo id do contato,
+        # telefone ou e-mail e atualiza o lead existente em vez de duplicar
         # (adota a conversa nova para as proximas mensagens chegarem certo).
-        if lead is None and (contact_id is not None or telefone):
-            lead = next((l for l in _db["leads"] if (
+        if lead is None and (contact_id is not None or telefone or email):
+            email_n = str(email or "").strip().lower()
+            candidatos = [l for l in _db["leads"] if (
                 (contact_id is not None and l.get("chatwoot_contact_id") == contact_id)
-                or (telefone and same_phone(l.get("telefone"), telefone)))), None)
-            if lead is not None:
+                or (telefone and same_phone(l.get("telefone"), telefone))
+                or (email_n and str(l.get("email") or "").strip().lower() == email_n))]
+            if candidatos:
+                # prefere um lead em atendimento; so cai num encerrado se nao houver
+                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido", "prestador")]
+                lead = (ativos or candidatos)[0]
                 if conversation_id is not None:
                     lead["chatwoot_conversation_id"] = conversation_id
                 # cliente que estava dado como perdido/fora do perfil voltou:
@@ -766,8 +873,10 @@ def handle_chatwoot_event(payload):
 
         # Se a campanha cadastrada foi identificada agora (ex.: o codigo veio na
         # mensagem seguinte), vincula e espelha o nome mesmo que o campo texto
-        # ja tivesse algo generico (titulo do anuncio, utm solto).
-        if incoming.get("campanha_id") and not lead.get("campanha_id"):
+        # ja tivesse algo generico (titulo do anuncio, utm solto). Lead ja GANHO
+        # nao recebe vinculo novo: a venda fechada nao pode ser creditada a uma
+        # campanha que nao a gerou (distorceria o relatorio).
+        if incoming.get("campanha_id") and not lead.get("campanha_id") and lead.get("status") != "ganho":
             lead["campanha_id"] = incoming["campanha_id"]
             lead["campanha"] = incoming["campanha"]
 
@@ -802,13 +911,23 @@ class Handler(BaseHTTPRequestHandler):
         pass  # silencioso (evita poluir o terminal com cada request)
 
     # -- helpers de resposta --
-    def send_json(self, status, obj):
+    def send_json(self, status, obj, headers=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _cookie(self, nome):
+        raw = self.headers.get("Cookie") or ""
+        for parte in raw.split(";"):
+            k, _, v = parte.strip().partition("=")
+            if k == nome:
+                return v
+        return None
 
     def read_body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -893,20 +1012,128 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = parse_qs(parsed.query)
 
-        # Estatisticas
+        # ---- Login (unica rota aberta sem sessao) ----
+        if path == "/api/login" and method == "POST":
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            login = str(body.get("login") or "").strip().lower()
+            senha = str(body.get("senha") or "")
+            with _lock:
+                u = next((x for x in _db["users"] if x.get("login") == login and x.get("ativo", True)), None)
+                if not u or not verifica_senha(u, senha):
+                    time.sleep(0.4)  # freia adivinhacao de senha
+                    return self.send_json(401, {"error": "Login ou senha incorretos"})
+                token = cria_sessao(u["id"])
+            return self.send_json(200, {"user": user_publico(u)}, headers={
+                "Set-Cookie": "sessao=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d" % (
+                    token, SESSAO_DIAS * 86400)})
+
+        # ---- Daqui em diante, toda rota exige sessao valida ----
+        with _lock:
+            user = usuario_da_sessao(self._cookie("sessao"))
+        if user is None:
+            return self.send_json(401, {"error": "Sessão expirada — faça login novamente"})
+        gestor = user["papel"] in ("admin", "gerente")
+
+        if path == "/api/me" and method == "GET":
+            return self.send_json(200, {"user": user_publico(user)})
+
+        if path == "/api/logout" and method == "POST":
+            with _lock:
+                _db.get("sessions", {}).pop(self._cookie("sessao"), None)
+                save_db()
+            return self.send_json(200, {"ok": True}, headers={
+                "Set-Cookie": "sessao=; Path=/; HttpOnly; Max-Age=0"})
+
+        # ---- Usuarios e niveis de acesso (so admin) ----
+        if path.startswith("/api/users"):
+            if user["papel"] != "admin":
+                return self.send_json(403, {"error": "Só o administrador gerencia usuários"})
+            if path == "/api/users" and method == "GET":
+                with _lock:
+                    return self.send_json(200, {"users": [user_publico(u) for u in _db["users"]]})
+            if path == "/api/users" and method == "POST":
+                try:
+                    body = self.read_body()
+                except Exception:
+                    return self.send_json(400, {"error": "Corpo invalido"})
+                nome = str(body.get("nome") or "").strip()
+                papel = body.get("papel")
+                senha = str(body.get("senha") or "")
+                if not nome:
+                    return self.send_json(400, {"error": "Informe o nome"})
+                if papel not in PAPEIS_USUARIO:
+                    return self.send_json(400, {"error": "Nível de acesso inválido"})
+                if senha and len(senha) < 6:
+                    return self.send_json(400, {"error": "Senha muito curta (mínimo 6 caracteres)"})
+                with _lock:
+                    login = str(body.get("login") or "").strip().lower() or _slug_login(nome)
+                    if any(u.get("login") == login for u in _db["users"]):
+                        return self.send_json(400, {"error": "Já existe usuário com esse login"})
+                    salt, h = hash_senha(senha) if senha else ("", "")
+                    novo = {"id": new_id(), "nome": nome, "login": login, "salt": salt,
+                            "senha_hash": h, "papel": papel, "ativo": True}
+                    _db["users"].append(novo)
+                    save_db()
+                    return self.send_json(201, {"user": user_publico(novo)})
+            mu = re.match(r"^/api/users/([^/]+)$", path)
+            if mu:
+                body = None
+                if method in ("PATCH", "PUT"):
+                    try:
+                        body = self.read_body()
+                    except Exception:
+                        return self.send_json(400, {"error": "Corpo invalido"})
+                with _lock:
+                    alvo = next((u for u in _db["users"] if u["id"] == mu.group(1)), None)
+                    if not alvo:
+                        return self.send_json(404, {"error": "Usuário não encontrado"})
+                    if method in ("PATCH", "PUT"):
+                        if "nome" in body and str(body["nome"]).strip():
+                            alvo["nome"] = str(body["nome"]).strip()
+                        if body.get("papel") in PAPEIS_USUARIO:
+                            if alvo["id"] == user["id"] and body["papel"] != "admin":
+                                return self.send_json(400, {"error": "Você não pode rebaixar o próprio acesso"})
+                            alvo["papel"] = body["papel"]
+                        if "ativo" in body:
+                            if alvo["id"] == user["id"] and not body["ativo"]:
+                                return self.send_json(400, {"error": "Você não pode desativar a si mesmo"})
+                            alvo["ativo"] = bool(body["ativo"])
+                        if body.get("senha"):
+                            if len(str(body["senha"])) < 6:
+                                return self.send_json(400, {"error": "Senha muito curta (mínimo 6 caracteres)"})
+                            alvo["salt"], alvo["senha_hash"] = hash_senha(str(body["senha"]))
+                            # troca de senha derruba sessoes antigas desse usuario
+                            _db["sessions"] = {t: s for t, s in _db["sessions"].items()
+                                               if s.get("user_id") != alvo["id"]}
+                        save_db()
+                        return self.send_json(200, {"user": user_publico(alvo)})
+                    if method == "DELETE":
+                        if alvo["id"] == user["id"]:
+                            return self.send_json(400, {"error": "Você não pode excluir a si mesmo"})
+                        _db["users"] = [u for u in _db["users"] if u["id"] != alvo["id"]]
+                        _db["sessions"] = {t: s for t, s in _db["sessions"].items()
+                                           if s.get("user_id") != alvo["id"]}
+                        save_db()
+                        return self.send_json(200, {"ok": True})
+
+        # Estatisticas (calculadas sobre os leads que ESTE usuario pode ver)
         if path == "/api/stats" and method == "GET":
             with _lock:
+                visiveis = [l for l in _db["leads"] if pode_ver_lead(user, l)]
                 por_status = {s: {"count": 0, "valor": 0} for s in STAGES}
                 total_valor = 0
-                for l in _db["leads"]:
+                for l in visiveis:
                     s = l.get("status") if l.get("status") in STAGES else "novo"
                     por_status[s]["count"] += 1
                     por_status[s]["valor"] += float(l.get("valor") or 0)
                     if l.get("status") not in ("perdido", "prestador"):
                         total_valor += float(l.get("valor") or 0)
-                produtores = sum(1 for l in _db["leads"] if l.get("tipo") == "produtor")
+                produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 return self.send_json(200, {
-                    "total": len(_db["leads"]),
+                    "total": len(visiveis),
                     "valor_pipeline": total_valor,
                     "produtores": produtores,
                     "por_status": por_status,
@@ -922,6 +1149,8 @@ class Handler(BaseHTTPRequestHandler):
                 })
 
         if path == "/api/campaigns" and method == "POST":
+            if not gestor:
+                return self.send_json(403, {"error": "Sem permissão para gerenciar campanhas"})
             try:
                 body = self.read_body()
             except Exception:
@@ -955,6 +1184,8 @@ class Handler(BaseHTTPRequestHandler):
 
         mc = re.match(r"^/api/campaigns/([^/]+)$", path)
         if mc:
+            if not gestor:
+                return self.send_json(403, {"error": "Sem permissão para gerenciar campanhas"})
             camp_id = mc.group(1)
             body = None
             if method in ("PATCH", "PUT"):
@@ -991,6 +1222,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # Configuracoes (numero do WhatsApp para gerar links de anuncio)
         if path == "/api/settings" and method in ("PATCH", "PUT", "POST"):
+            if not gestor:
+                return self.send_json(403, {"error": "Sem permissão para alterar configurações"})
             try:
                 body = self.read_body()
             except Exception:
@@ -1004,6 +1237,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # Relatorio por campanha (quantos leads/produtores/ganhos e R$ cada uma gerou)
         if path == "/api/report/campanhas" and method == "GET":
+            if not gestor:
+                return self.send_json(403, {"error": "Relatório disponível só para gerente/administrador"})
             with _lock:
                 camps = list(_db.get("campaigns", []))
                 rows = {c["id"]: {
@@ -1031,12 +1266,17 @@ class Handler(BaseHTTPRequestHandler):
                     out.append(sem)
                 return self.send_json(200, {"report": out})
 
-        # Equipe (SDRs e vendedores)
+        # Equipe (visao dos usuarios com papel de raia: SDRs e vendedores).
+        # Leitura para todos (nomes das raias); criacao/edicao so gestores —
+        # a gestao completa (login/senha/nivel) fica em /api/users (admin).
         if path == "/api/members" and method == "GET":
             with _lock:
-                return self.send_json(200, {"members": list(_db.get("members", []))})
+                equipe = [user_publico(u) for u in _db["users"] if u.get("papel") in PAPEIS]
+                return self.send_json(200, {"members": equipe})
 
         if path == "/api/members" and method == "POST":
+            if not gestor:
+                return self.send_json(403, {"error": "Sem permissão para alterar a equipe"})
             try:
                 body = self.read_body()
             except Exception:
@@ -1048,13 +1288,19 @@ class Handler(BaseHTTPRequestHandler):
             if papel not in PAPEIS:
                 return self.send_json(400, {"error": "Papel invalido"})
             with _lock:
-                member = {"id": new_id(), "nome": nome, "papel": papel, "ativo": True}
-                _db.setdefault("members", []).append(member)
+                login = _slug_login(nome)
+                if any(u.get("login") == login for u in _db["users"]):
+                    login = login + secrets.token_hex(2)
+                novo = {"id": new_id(), "nome": nome, "login": login, "salt": "",
+                        "senha_hash": "", "papel": papel, "ativo": True}
+                _db["users"].append(novo)
                 save_db()
-                return self.send_json(201, {"member": member})
+                return self.send_json(201, {"member": user_publico(novo)})
 
         mm = re.match(r"^/api/members/([^/]+)$", path)
         if mm:
+            if not gestor:
+                return self.send_json(403, {"error": "Sem permissão para alterar a equipe"})
             member_id = mm.group(1)
             body = None
             if method in ("PATCH", "PUT"):
@@ -1063,7 +1309,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     return self.send_json(400, {"error": "Corpo invalido"})
             with _lock:
-                member = next((x for x in _db.get("members", []) if x["id"] == member_id), None)
+                member = next((x for x in _db["users"] if x["id"] == member_id and x.get("papel") in PAPEIS), None)
                 if not member:
                     return self.send_json(404, {"error": "Membro nao encontrado"})
                 if method in ("PATCH", "PUT"):
@@ -1074,18 +1320,20 @@ class Handler(BaseHTTPRequestHandler):
                     if "ativo" in body:
                         member["ativo"] = bool(body["ativo"])
                     save_db()
-                    return self.send_json(200, {"member": member})
+                    return self.send_json(200, {"member": user_publico(member)})
                 if method == "DELETE":
-                    _db["members"] = [x for x in _db.get("members", []) if x["id"] != member_id]
+                    _db["users"] = [x for x in _db["users"] if x["id"] != member_id]
+                    _db["sessions"] = {t: s for t, s in _db["sessions"].items()
+                                       if s.get("user_id") != member_id}
                     save_db()
                     return self.send_json(200, {"ok": True})
 
-        # Listar
+        # Listar (cada papel enxerga so o que lhe cabe)
         if path == "/api/leads" and method == "GET":
             q = (qs.get("q") or [""])[0].lower().strip()
             canal = (qs.get("canal") or [""])[0]
             with _lock:
-                leads = list(_db["leads"])
+                leads = [l for l in _db["leads"] if pode_ver_lead(user, l)]
             if q:
                 def match(l):
                     blob = " ".join(str(l.get(k) or "") for k in
@@ -1099,6 +1347,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # Importacao em massa (ANTES da rota por id: 'import' casaria no regex)
         if path == "/api/leads/import" and method == "POST":
+            if not gestor:
+                return self.send_json(403, {"error": "Importação disponível só para gerente/administrador"})
             try:
                 body = self.read_body()
             except Exception:
@@ -1125,6 +1375,16 @@ class Handler(BaseHTTPRequestHandler):
                     apply_updates(lead, body)
                 except ValueError as e:
                     return self.send_json(400, {"error": str(e)})
+                # SDR cadastra para si; vendedor cadastra ja no proprio funil
+                if user["papel"] == "sdr":
+                    lead["sdr"] = user["nome"]
+                    lead["responsavel"] = user["nome"]
+                elif user["papel"] == "vendedor":
+                    lead["vendedor"] = user["nome"]
+                    lead["responsavel"] = user["nome"]
+                    if lead.get("status") not in VENDAS_STATUSES:
+                        lead["status"] = "produtor"
+                        lead["tipo"] = "produtor"
                 if not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip():
                     return self.send_json(400, {"error": "Telefone e e-mail são obrigatórios"})
                 dup, campo = find_duplicado(lead["telefone"], lead["email"])
@@ -1147,9 +1407,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"error": "Corpo invalido"})
             with _lock:
                 lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
-                if not lead:
+                if not lead or not pode_ver_lead(user, lead):
+                    # invisivel para este papel = como se nao existisse
                     return self.send_json(404, {"error": "Lead nao encontrado"})
                 if method in ("PATCH", "PUT"):
+                    # Regras por papel: cada um so mexe no que e seu
+                    if user["papel"] == "sdr" and "sdr" in body and body["sdr"] != user["nome"]:
+                        return self.send_json(403, {"error": "SDR não pode transferir o lead para outro SDR"})
+                    if user["papel"] == "vendedor" and "vendedor" in body and body["vendedor"] not in ("", user["nome"]):
+                        return self.send_json(403, {"error": "Vendedor só pode assumir o lead para si"})
                     # aplica numa copia: se uma regra barrar no meio, o lead
                     # original nao fica meio-editado na memoria
                     tentativa = dict(lead)
@@ -1171,6 +1437,8 @@ class Handler(BaseHTTPRequestHandler):
                     save_db()
                     return self.send_json(200, {"lead": lead})
                 if method == "DELETE":
+                    if not gestor:
+                        return self.send_json(403, {"error": "Só gerente/administrador pode excluir leads"})
                     _db["leads"] = [l for l in _db["leads"] if l["id"] != lead_id]
                     save_db()
                     return self.send_json(200, {"ok": True})
@@ -1210,9 +1478,14 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     load_db()
     load_cidades()
+    senha_admin = ensure_admin()
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("")
-    print("  CRM de Leads do Agro rodando")
+    print("  CRM Nova Era Drones rodando")
+    if senha_admin:
+        print("  -----------------------------------------------")
+        print("  PRIMEIRO ACESSO -> login: admin | senha: %s" % senha_admin)
+        print("  (troque a senha no painel de Usuarios)")
     print("  -----------------------------------------------")
     print("  Painel:   http://localhost:%d" % PORT)
     print("  Webhook:  http://localhost:%d/webhook/chatwoot?token=%s" % (PORT, WEBHOOK_TOKEN))

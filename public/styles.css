@@ -1,19 +1,21 @@
+/* Paleta Nova Era Drones (novaeradrones.com.br): petróleo #00303c + verde #70d44b */
 :root {
-  --green-900: #14351f;
-  --green-700: #1f6b3b;
-  --green-600: #2e8b4f;
-  --green-500: #38a169;
-  --green-100: #e6f4ea;
-  --bg: #f5f7f4;
+  --green-900: #001d25;
+  --green-700: #00303c;
+  --green-600: #0a5c46;
+  --green-500: #57b53a;
+  --green-100: #e8f7e0;
+  --accent: #70d44b;
+  --bg: #f4f7f5;
   --card: #ffffff;
-  --ink: #1c2b22;
-  --muted: #6b7c72;
-  --line: #e2e8e2;
+  --ink: #12262c;
+  --muted: #5f7a74;
+  --line: #dfe3eb;
   --danger: #c0392b;
   --amber: #b7791f;
   --blue: #2b6cb0;
   --purple: #6b46c1;
-  --shadow: 0 1px 3px rgba(20, 53, 31, 0.08), 0 4px 12px rgba(20, 53, 31, 0.06);
+  --shadow: 0 1px 3px rgba(0, 48, 60, 0.10), 0 4px 12px rgba(0, 48, 60, 0.07);
   --radius: 12px;
   --col-w: 224px;
   --lane-w: 168px;
@@ -45,9 +47,15 @@ body {
   flex-shrink: 0;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
-.brand .logo { font-size: 30px; line-height: 1; }
+.brand .logo-img { width: 42px; height: 42px; border-radius: 10px; }
 .brand h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.2px; }
+.brand .brand-accent { color: var(--accent); }
 .brand .sub { margin: 2px 0 0; font-size: 12px; opacity: 0.85; }
+.user-chip {
+  font-size: 12.5px; font-weight: 700; color: #fff;
+  background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px; padding: 7px 13px; white-space: nowrap;
+}
 
 .stats { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; }
 .stat {
@@ -68,8 +76,8 @@ body {
   transition: transform 0.05s, filter 0.15s, background 0.15s;
 }
 .btn:active { transform: translateY(1px); }
-.btn.primary { background: #fff; color: var(--green-700); }
-.btn.primary:hover { filter: brightness(0.95); }
+.btn.primary { background: var(--accent); color: var(--green-700); }
+.btn.primary:hover { filter: brightness(1.06); }
 .btn.ghost { background: rgba(255, 255, 255, 0.16); color: #fff; }
 .btn.ghost:hover { background: rgba(255, 255, 255, 0.26); }
 .btn.danger { color: var(--danger); }
@@ -303,6 +311,11 @@ label input:focus, label select:focus, label textarea:focus {
 .team-add input { flex: 1; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .team-add select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .team-empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 10px; }
+.team-row .tlogin { color: var(--muted); font-weight: 500; font-size: 11px; }
+.team-row select { font: inherit; font-size: 12px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.role-badge.outro { background: #ede9fe; color: var(--purple); }
+.user-add { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto auto; gap: 8px; }
+.user-add input, .user-add select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 
 /* ---------- Campanhas ---------- */
 .settings-row {

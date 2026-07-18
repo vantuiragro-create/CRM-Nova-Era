@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entrar — CRM Nova Era Drones</title>
+  <link rel="icon" href="brand/favicon.png" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(1200px 600px at 20% -10%, #06563f 0%, #00303c 55%, #001d25 100%);
+      color: #eaf3ee; padding: 20px;
+    }
+    .card {
+      width: 380px; max-width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px; padding: 34px 30px 28px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+      text-align: center;
+    }
+    .logo { width: 84px; height: 84px; margin: 0 auto 14px; display: block; }
+    h1 { font-size: 21px; letter-spacing: -0.2px; }
+    h1 span { color: #70d44b; }
+    .slogan { font-size: 12.5px; color: #9fb8ac; margin: 4px 0 24px; }
+    label { display: block; text-align: left; font-size: 12px; font-weight: 700;
+      color: #9fb8ac; margin: 12px 0 5px; }
+    input {
+      width: 100%; font: inherit; font-size: 15px; color: #eaf3ee;
+      background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 10px; padding: 11px 13px; outline: none;
+    }
+    input:focus { border-color: #70d44b; box-shadow: 0 0 0 3px rgba(112, 212, 75, 0.22); }
+    button {
+      width: 100%; margin-top: 22px; font: inherit; font-size: 15px; font-weight: 800;
+      color: #00303c; background: #70d44b; border: none; border-radius: 10px;
+      padding: 12px; cursor: pointer; transition: filter 0.15s, transform 0.05s;
+    }
+    button:hover { filter: brightness(1.07); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .erro {
+      margin-top: 14px; font-size: 13px; font-weight: 600; color: #ffb4a8;
+      min-height: 18px;
+    }
+    .rodape { margin-top: 22px; font-size: 11px; color: #6f8a7d; }
+  </style>
+</head>
+<body>
+  <form class="card" id="f">
+    <img class="logo" src="brand/icone.png" alt="Nova Era Drones" />
+    <h1>CRM <span>Nova Era</span> Drones</h1>
+    <p class="slogan">Preparar, voar! · Revenda autorizada DJI Agras</p>
+    <label for="login">Login</label>
+    <input id="login" name="login" autocomplete="username" autofocus />
+    <label for="senha">Senha</label>
+    <input id="senha" name="senha" type="password" autocomplete="current-password" />
+    <button id="btn" type="submit">Entrar</button>
+    <div class="erro" id="erro"></div>
+    <p class="rodape">Acesso restrito à equipe · Nova Era Drones</p>
+  </form>
+  <script>
+    'use strict';
+    const f = document.getElementById('f');
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btn');
+      const erro = document.getElementById('erro');
+      erro.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Entrando…';
+      try {
+        const res = await fetch('api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            login: document.getElementById('login').value.trim(),
+            senha: document.getElementById('senha').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Falha no login');
+        window.location.href = './';
+      } catch (err) {
+        erro.textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
+      }
+    });
+  </script>
+</body>
+</html>
