@@ -4,48 +4,50 @@
 const STAGE_LABELS = {
   novo: 'Novo lead (SDR)',
   triagem: 'Em triagem (SDR)',
-  produtor: 'Qualificado / Recebido (Vendas)',
+  qualificado: 'Qualificado / Recebido (Vendas)',
   negociacao: 'Em negociação (Vendas)',
   proposta: 'Proposta enviada (Vendas)',
   ganho: 'Fechado (ganho)',
   perdido: 'Perdido',
-  prestador: 'Prestador / fora do perfil',
 };
-let STAGES = ['novo', 'triagem', 'produtor', 'negociacao', 'proposta', 'ganho', 'perdido', 'prestador'];
+let STAGES = ['novo', 'triagem', 'qualificado', 'negociacao', 'proposta', 'ganho', 'perdido'];
 
-// Dois funis separados: o do SDR (primeiro contato/qualificação) e o de
-// Vendas. O mesmo lead nunca aparece nos dois — ao ser qualificado, ele sai
-// do funil SDR e entra no de Vendas (coluna "Recebido do SDR").
+// Cada coluna carrega o "patch" que o arraste aplica e um "match" que decide
+// quais leads ficam nela. Colunas de qualificação (q_prod/q_prest) não guardam
+// leads: ao soltar, o lead muda de tipo/etapa e migra para a aba do tipo.
+const COL = {
+  novo: { key: 'novo', label: 'Novo lead', patch: { status: 'novo' }, match: (l) => (l.status || 'novo') === 'novo' },
+  triagem: { key: 'triagem', label: 'Em triagem', patch: { status: 'triagem' }, match: (l) => l.status === 'triagem' },
+  q_prod: { key: 'q_prod', label: '🌾 → Produtores', patch: { status: 'qualificado', tipo: 'produtor' }, match: () => false, envia: 'Produtores' },
+  q_prest: { key: 'q_prest', label: '🔧 → Prestadores', patch: { status: 'qualificado', tipo: 'prestador' }, match: () => false, envia: 'Prestadores' },
+  perd_sdr: { key: 'perd_sdr', label: 'Perdido na triagem', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' && !l.tipo },
+  recebido: { key: 'recebido', label: '📥 Recebido do SDR', patch: { status: 'qualificado' }, match: (l) => l.status === 'qualificado' },
+  negociacao: { key: 'negociacao', label: 'Em negociação', patch: { status: 'negociacao' }, match: (l) => l.status === 'negociacao' },
+  proposta: { key: 'proposta', label: 'Proposta enviada', patch: { status: 'proposta' }, match: (l) => l.status === 'proposta' },
+  ganho: { key: 'ganho', label: '🏆 Ganho', patch: { status: 'ganho' }, match: (l) => l.status === 'ganho' },
+  perdido: { key: 'perdido', label: '🚩 Perdido', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
+};
+
+// Três funis, cada um numa aba. Produtores e Prestadores são iguais em etapas,
+// mas separados pelo "tipo".
 const FUNIS = {
   sdr: {
-    stages: ['novo', 'triagem', 'produtor', 'prestador', 'perdido'],
-    labels: {
-      novo: 'Novo lead',
-      triagem: 'Em triagem',
-      produtor: '✅ Qualificado → Vendas',
-      prestador: 'Prestador / fora do perfil',
-      perdido: 'Perdido na triagem',
-    },
-    papel: 'sdr',
-    campo: 'sdr',
-    inclui: (l) => ['novo', 'triagem', 'prestador'].includes(l.status || 'novo') ||
-      (l.status === 'perdido' && l.tipo !== 'produtor'),
+    papel: 'sdr', campo: 'sdr',
+    colunas: [COL.novo, COL.triagem, COL.q_prod, COL.q_prest, COL.perd_sdr],
+    inclui: (l) => ['novo', 'triagem'].includes(l.status || 'novo') || (l.status === 'perdido' && !l.tipo),
   },
-  vendas: {
-    stages: ['produtor', 'negociacao', 'proposta', 'ganho', 'perdido'],
-    labels: {
-      produtor: '🌾 Recebido do SDR',
-      negociacao: 'Em negociação',
-      proposta: 'Proposta enviada',
-      ganho: 'Fechado (ganho)',
-      perdido: 'Perdido (não fechou)',
-    },
-    papel: 'vendedor',
-    campo: 'vendedor',
-    inclui: (l) => ['produtor', 'negociacao', 'proposta', 'ganho'].includes(l.status) ||
-      (l.status === 'perdido' && l.tipo === 'produtor'),
+  produtor: {
+    papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
+    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.ganho, COL.perdido],
+    inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'perdido'),
+  },
+  prestador: {
+    papel: 'vendedor', campo: 'vendedor', tipo: 'prestador',
+    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.ganho, COL.perdido],
+    inclui: (l) => l.tipo === 'prestador' && (SALES.includes(l.status) || l.status === 'perdido'),
   },
 };
+const SALES = ['qualificado', 'negociacao', 'proposta', 'ganho'];
 
 let leadsCache = [];
 let members = [];
@@ -279,6 +281,14 @@ function ensureMap() {
   ).addTo(map);
 
   markersLayer = L.layerGroup().addTo(map);
+
+  // No modo "ajustar local", um clique no mapa marca a fazenda do lead.
+  map.on('click', (e) => {
+    if (!ajustandoId) return;
+    const lead = leadsCache.find((l) => l.id === ajustandoId);
+    ajustandoId = null;
+    if (lead) salvarLocalizacao(lead, Number(e.latlng.lat.toFixed(6)), Number(e.latlng.lng.toFixed(6)));
+  });
 }
 
 async function salvarLocalizacao(lead, lat, lng) {
@@ -294,6 +304,19 @@ async function salvarLocalizacao(lead, lat, lng) {
   renderMap();
 }
 
+let ajustandoId = null; // id do lead em modo "ajustar local" (clicar no mapa)
+
+function pinClass(lead, exato) {
+  if (lead.status === 'ganho') return 'won';
+  if (lead.status === 'perdido') return 'lost';
+  return exato ? 'exato' : 'aprox';
+}
+function pinFlag(lead) {
+  if (lead.status === 'ganho') return '<span class="pin-flag">🟢</span>';
+  if (lead.status === 'perdido') return '<span class="pin-flag">🔴</span>';
+  return '';
+}
+
 function renderMap() {
   if (!map) return;
   markersLayer.clearLayers();
@@ -301,28 +324,51 @@ function renderMap() {
   for (const lead of leadsCache) {
     const loc = leadPosition(lead);
     if (!loc) continue;
+    const ajustando = ajustandoId === lead.id;
     const icon = L.divIcon({
       className: '',
-      html: `<div class="lead-pin ${loc.exato ? 'exato' : 'aprox'}"></div>`,
+      html: `<div class="lead-pin ${pinClass(lead, loc.exato)}${ajustando ? ' movendo' : ''}"></div>${pinFlag(lead)}`,
       iconSize: [18, 18],
       iconAnchor: [9, 9],
     });
-    const mk = L.marker(loc.pos, { icon, draggable: true });
+    // só arrasta quando o usuário pediu para ajustar (evita mover sem querer)
+    const mk = L.marker(loc.pos, { icon, draggable: ajustando });
 
     const pop = el('div', 'map-popup');
-    pop.append(el('div', 'pp-nome', lead.nome || '(sem nome)'));
-    if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · aproximado')));
+    const nome = el('div', 'pp-nome');
+    if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢 '));
+    else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴 '));
+    nome.append(document.createTextNode(lead.nome || '(sem nome)'));
+    pop.append(nome);
+    if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · local aproximado')));
     if (lead.produto) pop.append(el('div', 'pp-linha', '📦 ' + lead.produto));
     if (lead.valor > 0) pop.append(el('div', 'pp-linha', '💰 ' + brl(lead.valor)));
     const resp = lead.vendedor || lead.sdr;
     if (resp) pop.append(el('div', 'pp-linha', '👤 ' + resp));
-    const acao = el('span', 'pp-acao', 'Abrir lead');
-    acao.onclick = () => { map.closePopup(); openModal(lead); };
-    pop.append(acao);
+
+    const acoes = el('div', 'pp-acoes');
+    const bEdit = el('button', 'pp-btn', '✏️ Editar lead');
+    bEdit.type = 'button';
+    bEdit.onclick = () => { map.closePopup(); openModal(lead); };
+    acoes.append(bEdit);
+    if (ajustando) {
+      const bOk = el('button', 'pp-btn primary', '👆 Clique no mapa p/ marcar');
+      bOk.type = 'button';
+      bOk.onclick = () => { ajustandoId = null; renderMap(); };
+      acoes.append(bOk);
+    } else {
+      const bLoc = el('button', 'pp-btn', '📍 Ajustar local');
+      bLoc.type = 'button';
+      bLoc.onclick = () => { ajustandoId = lead.id; map.closePopup(); renderMap();
+        toast('Clique no mapa onde fica a fazenda (ou arraste o pino)'); };
+      acoes.append(bLoc);
+    }
+    pop.append(acoes);
     mk.bindPopup(pop);
 
     mk.on('dragend', () => {
       const p = mk.getLatLng();
+      ajustandoId = null;
       salvarLocalizacao(lead, Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6)));
     });
     mk.addTo(markersLayer);
@@ -338,7 +384,8 @@ function renderMap() {
 function setView(view) {
   currentView = view;
   $('#tabSDR').classList.toggle('active', view === 'sdr');
-  $('#tabVendas').classList.toggle('active', view === 'vendas');
+  $('#tabProdutor').classList.toggle('active', view === 'produtor');
+  $('#tabPrestador').classList.toggle('active', view === 'prestador');
   $('#tabMap').classList.toggle('active', view === 'map');
   $('#boardWrap').hidden = view === 'map';
   $('#mapWrap').hidden = view !== 'map';
@@ -418,7 +465,7 @@ function renderBoard() {
   const funil = FUNIS[currentView] || FUNIS.sdr;
   const board = $('#swimboard');
   board.innerHTML = '';
-  board.style.gridTemplateColumns = `var(--lane-w) repeat(${funil.stages.length}, var(--col-w))`;
+  board.style.gridTemplateColumns = `var(--lane-w) repeat(${funil.colunas.length}, var(--col-w))`;
 
   const leadsFunil = leadsCache.filter(funil.inclui);
   let lanes = buildLanes(funil, leadsFunil);
@@ -427,9 +474,9 @@ function renderBoard() {
 
   // Cabeçalho: canto + colunas deste funil
   board.append(el('div', 'corner'));
-  for (const stage of funil.stages) {
-    const h = el('div', `col-h st-${stage}`);
-    h.append(el('span', 'dot'), document.createTextNode(funil.labels[stage] || stage));
+  for (const col of funil.colunas) {
+    const h = el('div', `col-h st-${col.key}`);
+    h.append(el('span', 'dot'), document.createTextNode(col.label));
     board.append(h);
   }
 
@@ -437,8 +484,8 @@ function renderBoard() {
   for (const lane of visibleLanes) {
     const laneLeads = leadsFunil.filter((l) => laneKeyForLead(l, funil) === lane.key);
     board.append(renderLaneLabel(lane, funil));
-    for (const stage of funil.stages) {
-      board.append(renderCell(lane, stage, laneLeads.filter((l) => (l.status || 'novo') === stage), funil));
+    for (const col of funil.colunas) {
+      board.append(renderCell(lane, col, laneLeads.filter(col.match), funil));
     }
   }
 
@@ -456,32 +503,29 @@ function renderLaneLabel(lane, funil) {
   name.append(badge);
   box.append(name);
 
-  // Placar da pessoa calculado sobre TODOS os leads dela (mesmo os que já
-  // saíram deste funil — ex.: qualificados do SDR que foram para Vendas)
   const todos = leadsCache.filter((l) => laneKeyForLead(l, funil) === lane.key);
   const metrics = el('div', 'lane-metrics');
   const m1 = el('div');
-  if (funil.campo === 'sdr') {
+  if (funil.papel === 'sdr') {
     const naFila = todos.filter((l) => ['novo', 'triagem'].includes(l.status || 'novo')).length;
-    const qualificados = todos.filter((l) => l.tipo === 'produtor').length;
-    const prestadores = todos.filter((l) => l.tipo === 'prestador').length;
+    const qualificados = todos.filter((l) => l.tipo).length;
     m1.innerHTML = `<b>${naFila}</b> na fila · <b>${qualificados}</b> qualificados`;
-    metrics.append(m1, el('div', null, `${prestadores} fora do perfil`));
+    metrics.append(m1);
   } else {
-    const ganhos = todos.filter((l) => l.status === 'ganho').length;
-    const emAberto = todos
-      .filter((l) => ['produtor', 'negociacao', 'proposta'].includes(l.status))
+    const doFunil = todos.filter(funil.inclui);
+    const ganhos = doFunil.filter((l) => l.status === 'ganho').length;
+    const emAberto = doFunil
+      .filter((l) => SALES.includes(l.status) && l.status !== 'ganho')
       .reduce((a, l) => a + (Number(l.valor) || 0), 0);
-    m1.innerHTML = `<b>${todos.filter(funil.inclui).length}</b> leads · <b>${ganhos}</b> ganhos`;
+    m1.innerHTML = `<b>${doFunil.length}</b> leads · <b>${ganhos}</b> ganhos`;
     metrics.append(m1, el('div', null, brl(emAberto) + ' em aberto'));
   }
   box.append(metrics);
   return box;
 }
 
-function renderCell(lane, stage, cellLeads, funil) {
-  const cell = el('div', `cell st-${stage}`);
-  cell.dataset.stage = stage;
+function renderCell(lane, col, cellLeads, funil) {
+  const cell = el('div', `cell st-${col.key}`);
   cell.dataset.lane = lane.key;
 
   for (const lead of cellLeads) cell.append(renderCard(lead));
@@ -492,17 +536,21 @@ function renderCell(lane, stage, cellLeads, funil) {
     e.preventDefault();
     cell.classList.remove('drop-hover');
     const id = e.dataTransfer.getData('text/plain');
-    dropLead(id, lane, stage, funil);
+    dropLead(id, lane, col, funil);
   });
   return cell;
 }
 
 function renderCard(lead) {
-  const card = el('div', 'card');
+  const card = el('div', 'card' + (lead.status === 'ganho' ? ' won' : lead.status === 'perdido' ? ' lost' : ''));
   card.draggable = true;
   card.dataset.id = lead.id;
 
-  card.append(el('div', 'name', lead.nome || '(sem nome)'));
+  const nome = el('div', 'name');
+  if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢'));
+  else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴'));
+  nome.append(document.createTextNode(lead.nome || '(sem nome)'));
+  card.append(nome);
   if (lead.telefone) { const r = el('div', 'row'); r.append(el('span', 'ic', '📱'), document.createTextNode(lead.telefone)); card.append(r); }
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
@@ -525,29 +573,26 @@ function renderCard(lead) {
 }
 
 // Arrastar um card para outra raia/etapa (dentro do funil ativo)
-async function dropLead(id, lane, stage, funil) {
+async function dropLead(id, lane, col, funil) {
   const lead = leadsCache.find((l) => l.id === id);
   if (!lead) return;
 
-  const patch = { status: stage };
-  // no funil SDR a raia define o SDR; no de Vendas, o vendedor
+  const patch = { ...col.patch };
+  // a raia define quem é o dono neste funil (SDR ou vendedor)
   patch[funil.campo] = lane.isNone ? '' : lane.nome;
 
   const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo };
   Object.assign(lead, patch);
-  // espelha a regra do servidor de tipo automático
-  if (stage === 'prestador') lead.tipo = 'prestador';
-  else if (['produtor', 'negociacao', 'proposta', 'ganho'].includes(stage)) lead.tipo = 'produtor';
   renderBoard();
 
   try {
     await api('/api/leads/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(patch) });
     loadStats();
-    if (funil.campo === 'sdr' && stage === 'produtor') {
-      toast('🌾 Qualificado! O lead foi para o funil de Vendas (Sem responsável)');
+    if (col.envia) {
+      toast(`✅ Qualificado! Enviado para a aba ${col.envia}`);
     } else {
       const dest = lane.isNone ? 'Sem responsável' : lane.nome;
-      toast(`→ ${funil.labels[stage] || stage} · ${dest}`);
+      toast(`→ ${col.label} · ${dest}`);
     }
   } catch (err) {
     Object.assign(lead, before);
@@ -833,6 +878,85 @@ $('#btnSaveWa').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Relatório diário (leads recebidos × qualificados)
+// ---------------------------------------------------------------------------
+let reportCache = [];
+
+function fmtDia(iso) {
+  const [a, m, d] = iso.split('-');
+  return `${d}/${m}/${a}`;
+}
+
+async function renderReport() {
+  const body = $('#reportBody');
+  const totals = $('#reportTotals');
+  body.innerHTML = '';
+  totals.innerHTML = '';
+  totals.append(el('div', 'team-empty', 'Carregando…'));
+  try {
+    const dias = $('#reportDias').value;
+    const data = await api('/api/report/diario?dias=' + dias);
+    reportCache = data.report || [];
+    const t = data.totais || {};
+    totals.innerHTML = '';
+    const cards = [
+      { n: t.recebidos || 0, l: 'Leads recebidos' },
+      { n: t.recebidos_chatwoot || 0, l: 'Via Chatwoot' },
+      { n: t.qualificados || 0, l: 'Qualificados' },
+      { n: t.ganhos || 0, l: 'Ganhos' },
+    ];
+    for (const c of cards) {
+      const box = el('div', 'rt-card');
+      box.append(el('div', 'rt-n', String(c.n)), el('div', 'rt-l', c.l));
+      totals.append(box);
+    }
+    if (!reportCache.length) { body.append(el('div', 'team-empty', 'Sem movimento no período.')); return; }
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>Dia</th>' +
+      '<th class="num">Recebidos</th><th class="num">Chatwoot</th>' +
+      '<th class="num">Qualificados</th><th class="num">🌾 Prod.</th><th class="num">🔧 Prest.</th>' +
+      '<th class="num">Ganhos</th><th class="num">Perdidos</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const r of reportCache) {
+      const tr = document.createElement('tr');
+      const cells = [fmtDia(r.dia), r.recebidos, r.recebidos_chatwoot, r.qualificados,
+        r.produtores, r.prestadores, r.ganhos, r.perdidos];
+      cells.forEach((v, i) => {
+        const td = document.createElement('td');
+        if (i >= 1) td.className = 'num';
+        td.textContent = String(v);
+        tr.append(td);
+      });
+      tb.append(tr);
+    }
+    table.append(tb);
+    body.append(table);
+  } catch (err) {
+    totals.innerHTML = '';
+    body.innerHTML = '';
+    body.append(el('div', 'team-empty', err.message));
+  }
+}
+
+function baixarReportCsv() {
+  if (!reportCache.length) { toast('Nada para exportar'); return; }
+  const head = 'dia;recebidos;recebidos_chatwoot;qualificados;produtores;prestadores;ganhos;perdidos';
+  const linhas = reportCache.map((r) => [r.dia, r.recebidos, r.recebidos_chatwoot,
+    r.qualificados, r.produtores, r.prestadores, r.ganhos, r.perdidos].join(';'));
+  const csv = '﻿' + head + '\n' + linhas.join('\n') + '\n';
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'relatorio-diario.csv';
+  a.click();
+}
+
+$('#btnReport').addEventListener('click', () => { $('#reportBackdrop').hidden = false; renderReport(); });
+$('#reportClose').addEventListener('click', () => { $('#reportBackdrop').hidden = true; });
+$('#reportBackdrop').addEventListener('click', (e) => { if (e.target === $('#reportBackdrop')) $('#reportBackdrop').hidden = true; });
+$('#reportDias').addEventListener('change', renderReport);
+$('#btnReportCsv').addEventListener('click', baixarReportCsv);
+
+// ---------------------------------------------------------------------------
 // Importação em massa
 // ---------------------------------------------------------------------------
 const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;sdr;vendedor;canal;campanha;observacoes';
@@ -1009,10 +1133,12 @@ document.addEventListener('keydown', (e) => {
   if (!$('#teamBackdrop').hidden) { $('#teamBackdrop').hidden = true; refreshAll(); }
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
   if (!$('#importBackdrop').hidden) $('#importBackdrop').hidden = true;
+  if (!$('#reportBackdrop').hidden) $('#reportBackdrop').hidden = true;
 });
 
 $('#tabSDR').addEventListener('click', () => setView('sdr'));
-$('#tabVendas').addEventListener('click', () => setView('vendas'));
+$('#tabProdutor').addEventListener('click', () => setView('produtor'));
+$('#tabPrestador').addEventListener('click', () => setView('prestador'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
@@ -1052,14 +1178,13 @@ function applyRoleUI() {
   const gestor = me.papel === 'admin' || me.papel === 'gerente';
   $('#userChip').textContent = `👤 ${me.nome} · ${PAPEL_LABEL[me.papel] || me.papel}`;
   $('#btnImport').hidden = !gestor;
+  $('#btnReport').hidden = !gestor;
   $('#btnCampaigns').hidden = !gestor;
   $('#btnUsers').hidden = me.papel !== 'admin';
-  // vendedor não tem nada no funil SDR; entra direto no de Vendas
+  // vendedor não tem nada no funil SDR; entra direto na aba de Produtores
   if (me.papel === 'vendedor') {
     $('#tabSDR').hidden = true;
-    currentView = 'vendas';
-    $('#tabSDR').classList.remove('active');
-    $('#tabVendas').classList.add('active');
+    setView('produtor');
   }
 }
 

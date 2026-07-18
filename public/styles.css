@@ -137,12 +137,21 @@ body {
 }
 .lead-pin.aprox { background: #ed8936; }
 .lead-pin.exato { background: var(--green-600); }
+.lead-pin.won { background: var(--green-600); }
+.lead-pin.lost { background: var(--danger); }
+.lead-pin.movendo { box-shadow: 0 0 0 4px rgba(112, 212, 75, 0.6); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(112, 212, 75, 0.25); } }
+.pin-flag { position: absolute; left: 10px; top: -12px; font-size: 13px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
 .map-popup .pp-nome { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
 .map-popup .pp-linha { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.map-popup .pp-acao {
-  margin-top: 8px; display: inline-block; font-size: 12px; font-weight: 700;
-  color: var(--green-700); cursor: pointer; text-decoration: underline;
+.map-popup .pp-acoes { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.map-popup .pp-btn {
+  font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  border-radius: 8px; padding: 6px 10px;
 }
+.map-popup .pp-btn:hover { background: var(--green-100); }
+.map-popup .pp-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--green-700); }
 
 /* ---------- Quadro swimlane ---------- */
 .board-wrap { flex: 1; overflow: auto; padding: 0 0 24px; }
@@ -197,16 +206,20 @@ body {
 }
 .cell.drop-hover { background: var(--green-100); box-shadow: inset 0 0 0 2px var(--green-500); }
 
-/* Cores por etapa */
+/* Cores por coluna */
 .st-novo .dot { background: #718096; }
 .st-triagem .dot { background: var(--blue); }
-.st-produtor .dot { background: var(--green-500); }
+.st-q_prod .dot { background: var(--green-500); }
+.st-q_prest .dot { background: #2f855a; }
+.st-perd_sdr .dot { background: var(--danger); }
+.st-recebido .dot { background: var(--green-500); }
 .st-negociacao .dot { background: var(--purple); }
 .st-proposta .dot { background: var(--amber); }
 .st-ganho .dot { background: var(--green-600); }
 .st-perdido .dot { background: var(--danger); }
-.st-prestador .dot { background: #a0aec0; }
-.col-h.st-prestador { background: #f3f0ea; }
+.col-h.st-q_prod, .col-h.st-q_prest { background: var(--green-100); }
+.col-h.st-ganho { background: #eafaf0; }
+.col-h.st-perdido, .col-h.st-perd_sdr { background: #fdece9; }
 
 /* ---------- Card ---------- */
 .card {
@@ -217,7 +230,10 @@ body {
 }
 .card:hover { box-shadow: var(--shadow); border-color: #cdd8ce; }
 .card.dragging { opacity: 0.4; }
+.card.won { border-left: 4px solid var(--green-600); }
+.card.lost { border-left: 4px solid var(--danger); }
 .card .name { font-weight: 700; font-size: 13px; margin-bottom: 2px; line-height: 1.25; }
+.card .name .flag { font-size: 11px; margin-right: 3px; }
 .card .row { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .card .row .ic { width: 13px; text-align: center; opacity: 0.85; flex-shrink: 0; }
 .card .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 7px; }
@@ -355,6 +371,14 @@ label input:focus, label select:focus, label textarea:focus {
 .camp-report td.num, .camp-report th.num { text-align: right; }
 .camp-report tr.best td { background: #eafaf0; }
 .tag.campanha { background: #f3e8fd; color: var(--purple); }
+
+/* ---------- Relatório diário ---------- */
+.report-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+.report-totals { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.rt-card { flex: 1; min-width: 110px; background: #f6f8f6; border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 14px; }
+.rt-n { font-size: 20px; font-weight: 800; color: var(--green-700); }
+.rt-l { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
 /* ---------- Importação ---------- */
 #importFile { font: inherit; margin: 6px 0 12px; width: 100%; }

@@ -50,16 +50,19 @@ O webhook do Chatwoot não usa login (continua protegido pelo token na URL).
 **SDRs** e **vendedores**. Os leads novos do Chatwoot são distribuídos
 automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequência).
 
-São **dois funis separados** (abas no topo), cada um com raias por pessoa:
+São **três funis em abas** (mais o Mapa), cada um com raias por pessoa:
 
-- **📞 Funil SDR** (raias = SDRs): `Novo lead → Em triagem → ✅ Qualificado`,
-  mais as colunas **Prestador / fora do perfil** e **Perdido na triagem**.
-  Ao arrastar para **Qualificado**, o lead sai deste funil e entra no de
-  Vendas. O rótulo do SDR mostra: na fila, qualificados e fora do perfil.
-- **💼 Funil Vendas** (raias = vendedores): `🌾 Recebido do SDR → Em negociação
-  → Proposta enviada → Fechado (ganho)` e **Perdido (não fechou)**. Leads
-  qualificados chegam em "Sem responsável" — o vendedor arrasta para a própria
-  raia para assumir. O rótulo mostra leads, ganhos e R$ em aberto.
+- **📞 Funil SDR** (raias = SDRs): `Novo lead → Em triagem`, e as colunas de
+  qualificação **🌾 → Produtores** e **🔧 → Prestadores** (arrastar para lá
+  qualifica o lead **e** o envia para a aba do tipo), mais **Perdido na triagem**.
+- **🌾 Produtores** e **🔧 Prestadores** (raias = vendedores): funis de venda
+  idênticos, mas separados — `📥 Recebido do SDR → Em negociação → Proposta
+  enviada → 🏆 Ganho` e **🚩 Perdido**. Leads qualificados chegam em "Sem
+  responsável"; o vendedor arrasta para a própria raia para assumir.
+- **Bandeiras:** cards e pinos de negócios **ganhos** ficam com bandeira 🟢 e
+  os **perdidos** com 🔴 — para resgatar oportunidades depois.
+- **📊 Relatório** (gerente/admin): quantos leads chegaram por dia (e quantos
+  vieram do Chatwoot) × quantos foram qualificados, com download em CSV.
 - **Clique num card** para classificar (produtor/prestador), definir SDR e
   vendedor, mudar a etapa e editar todos os dados.
 - **Anti-duplicado:** o sistema recusa cadastrar/editar um lead com telefone ou
@@ -83,13 +86,14 @@ A aba **Mapa** (ao lado dos funis) mostra cada lead como um pino:
 
 - 🟠 **Aproximado** — o lead tem só a cidade preenchida; o pino fica no centro
   do município (coordenadas oficiais do IBGE, já embutidas).
-- 🟢 **Fazenda exata** — o vendedor **arrastou o pino** até a fazenda do
-  cliente; a coordenada é salva no banco na hora.
+- 🟢 **Fazenda exata** — a localização já foi ajustada para o ponto real.
 
-Fluxo: o SDR preenche a cidade → o pino aparece laranja → na visita/conversa o
-vendedor arrasta o pino até a fazenda → vira verde e fica registrado. Com o
-tempo, isso forma o mapa real da sua carteira de clientes. Clique num pino para
-ver os dados e abrir o lead. A busca e o filtro por canal também valem no mapa.
+Clique num pino para abrir o cartão com dois botões: **✏️ Editar lead** (abre a
+ficha) e **📍 Ajustar local** (entra no modo de ajuste — então **clique no mapa**
+onde fica a fazenda, ou arraste o pino, e a coordenada é salva). Pinos de
+negócios ganhos aparecem com bandeira 🟢 e perdidos com 🔴. Com o tempo isso
+forma o mapa real da sua carteira. O fundo é imagem de **satélite** (dá para ver
+sede, barracão e pivô); há um botão no canto para alternar para o mapa de ruas.
 
 > O mapa usa OpenStreetMap (gratuito) e precisa de internet para carregar o
 > fundo; os pinos e coordenadas são todos locais.

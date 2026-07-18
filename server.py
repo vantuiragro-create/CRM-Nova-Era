@@ -23,7 +23,7 @@ import secrets
 import threading
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -45,11 +45,14 @@ DB_FILE = os.path.join(DATA_DIR, "leads.json")
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 
 # Etapas do funil (ordem = ordem das colunas)
-#   novo/triagem       -> fase do SDR (primeiro contato e qualificacao)
-#   produtor..ganho    -> fase do vendedor (produtor rural qualificado)
-#   perdido / prestador-> terminais (perdido = produtor que nao fechou;
-#                         prestador = fora do perfil)
-STAGES = ["novo", "triagem", "produtor", "negociacao", "proposta", "ganho", "perdido", "prestador"]
+#   novo/triagem          -> fase do SDR (primeiro contato e qualificacao)
+#   qualificado..ganho    -> funil de vendas (o "tipo" diz se e produtor ou
+#                            prestador; cada tipo tem sua aba)
+#   perdido               -> venda/lead que nao avancou (guardado p/ resgate)
+STAGES = ["novo", "triagem", "qualificado", "negociacao", "proposta", "ganho", "perdido"]
+
+# Etapas do funil de vendas (ja qualificado)
+SALES_STAGES = ("qualificado", "negociacao", "proposta", "ganho")
 
 # Papeis da equipe (raias dos funis)
 PAPEIS = ("sdr", "vendedor")
@@ -123,6 +126,22 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+BRT = timezone(timedelta(hours=-3))  # horario de Brasilia (sem horario de verao)
+
+
+def dia_brt(iso):
+    """Converte um timestamp ISO (UTC) para a data 'AAAA-MM-DD' em Brasilia."""
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(BRT).strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+
+
 def new_id():
     return base64.urlsafe_b64encode(secrets.token_bytes(9)).decode().rstrip("=")
 
@@ -156,6 +175,19 @@ def load_db():
                     })
                 print("  equipe antiga migrada para usuarios (defina as senhas no painel)")
             data.pop("members", None)
+            # Migracao das etapas antigas:
+            #   status "produtor" (recebido no funil) -> "qualificado"
+            #   status "prestador" (fora do perfil)   -> qualificado + tipo prestador
+            for l in data["leads"]:
+                if l.get("status") == "produtor":
+                    l["status"] = "qualificado"
+                    l.setdefault("tipo", "") or l.__setitem__("tipo", l.get("tipo") or "produtor")
+                elif l.get("status") == "prestador":
+                    l["status"] = "qualificado"
+                    l["tipo"] = "prestador"
+                l.setdefault("qualificado_em", None)
+                if l.get("tipo") and not l.get("qualificado_em"):
+                    l["qualificado_em"] = l.get("updated_at") or l.get("created_at")
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -166,7 +198,8 @@ def load_db():
             print("AVISO: banco ilegivel (%s). Copia guardada em: %s" % (e, backup))
         except OSError:
             print("AVISO: banco ilegivel e nao foi possivel criar backup:", e)
-        _db = {"leads": [], "members": [], "rr_sdr": 0, "campaigns": [], "settings": {}}
+        _db = {"leads": [], "users": [], "rr_sdr": 0, "campaigns": [],
+               "settings": {}, "sessions": {}}
 
 
 def save_db():
@@ -213,15 +246,13 @@ def make_lead(partial=None):
         "lat": None,   # localizacao exata da fazenda (ajustada no mapa);
         "lng": None,   # None = usar o centro da cidade (regiao) como aproximacao
         "last_message": "",
+        "qualificado_em": None,  # quando o SDR classificou (para o relatorio)
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
     if partial:
         lead.update(partial)
     return lead
-
-
-PRODUTOR_STAGES = ("produtor", "negociacao", "proposta", "ganho")
 
 
 def apply_updates(lead, updates):
@@ -269,12 +300,12 @@ def apply_updates(lead, updates):
             continue
         lead[key] = value
 
-    # Consistencia automatica entre a coluna e a classificacao do lead:
-    if "status" in updates:
-        if lead["status"] == "prestador":
-            lead["tipo"] = "prestador"
-        elif lead["status"] in PRODUTOR_STAGES:
-            lead["tipo"] = "produtor"
+    # Consistencia: entrar no funil de vendas sem tipo assume "produtor";
+    # ao ganhar o tipo pela primeira vez, marca a data de qualificacao.
+    if lead.get("status") in SALES_STAGES and not lead.get("tipo"):
+        lead["tipo"] = "produtor"
+    if lead.get("tipo") and not lead.get("qualificado_em"):
+        lead["qualificado_em"] = now_iso()
 
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
@@ -351,7 +382,8 @@ def _slug_header(h):
 
 # nomes de coluna aceitos -> campo do lead
 IMPORT_COLS = {
-    "nome": "nome", "cliente": "nome", "produtor": "nome", "nomedoprodutor": "nome",
+    "nome": "nome", "cliente": "nome", "nomedoprodutor": "nome",
+    "tipo": "tipo",
     "telefone": "telefone", "celular": "telefone", "whatsapp": "telefone",
     "fone": "telefone", "telefonewhatsapp": "telefone",
     "email": "email", "emailnf": "email",
@@ -443,10 +475,13 @@ def importar_csv(texto):
             lead["observacoes"] = dados.get("observacoes", "")
             st = dados.get("status", "").lower()
             lead["status"] = st if st in STAGES else "novo"
-            if lead["status"] == "prestador":
-                lead["tipo"] = "prestador"
-            elif lead["status"] in PRODUTOR_STAGES:
+            tp = dados.get("tipo", "").lower()
+            if tp in ("produtor", "prestador"):
+                lead["tipo"] = tp
+            elif lead["status"] in SALES_STAGES:
                 lead["tipo"] = "produtor"
+            if lead.get("tipo"):
+                lead["qualificado_em"] = now_iso()
             _db["leads"].append(lead)
             criados += 1
         if criados:
@@ -520,7 +555,12 @@ def user_publico(u):
 # ---------------------------------------------------------------------------
 # Permissoes por papel
 # ---------------------------------------------------------------------------
-VENDAS_STATUSES = ("produtor", "negociacao", "proposta", "ganho")
+VENDAS_STATUSES = SALES_STAGES  # etapas em que o lead esta no funil de vendas
+
+
+def no_funil_vendas(lead):
+    return lead.get("status") in VENDAS_STATUSES or (
+        lead.get("status") == "perdido" and bool(lead.get("tipo")))
 
 
 def pode_ver_lead(user, lead):
@@ -530,10 +570,8 @@ def pode_ver_lead(user, lead):
     if p == "sdr":
         return lead.get("sdr") == user.get("nome")
     if p == "vendedor":
-        no_funil_vendas = lead.get("status") in VENDAS_STATUSES or (
-            lead.get("status") == "perdido" and lead.get("tipo") == "produtor")
         dono = str(lead.get("vendedor") or "").strip()
-        return no_funil_vendas and dono in ("", user.get("nome"))
+        return no_funil_vendas(lead) and dono in ("", user.get("nome"))
     return False
 
 
@@ -845,14 +883,15 @@ def handle_chatwoot_event(payload):
                 or (email_n and str(l.get("email") or "").strip().lower() == email_n))]
             if candidatos:
                 # prefere um lead em atendimento; so cai num encerrado se nao houver
-                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido", "prestador")]
+                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido")]
                 lead = (ativos or candidatos)[0]
                 if conversation_id is not None:
                     lead["chatwoot_conversation_id"] = conversation_id
                 # cliente que estava dado como perdido/fora do perfil voltou:
                 # reentra na triagem para a equipe enxergar
-                if lead.get("status") in ("perdido", "prestador"):
+                if lead.get("status") == "perdido":
                     lead["status"] = "novo"
+                    lead["tipo"] = ""  # volta para a triagem do SDR
                 print("[webhook] conversa nova %s reconhecida -> lead %s" % (
                     conversation_id, lead.get("nome") or lead["id"]))
 
@@ -1129,7 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
                     s = l.get("status") if l.get("status") in STAGES else "novo"
                     por_status[s]["count"] += 1
                     por_status[s]["valor"] += float(l.get("valor") or 0)
-                    if l.get("status") not in ("perdido", "prestador"):
+                    if l.get("status") != "perdido":
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 return self.send_json(200, {
@@ -1259,12 +1298,60 @@ class Handler(BaseHTTPRequestHandler):
                     if l.get("status") == "ganho":
                         row["ganhos"] += 1
                         row["valor_ganho"] += valor
-                    elif l.get("status") not in ("perdido", "prestador"):
+                    elif l.get("status") != "perdido":
                         row["valor_aberto"] += valor
                 out = sorted(rows.values(), key=lambda r: r["leads"], reverse=True)
                 if sem["leads"]:
                     out.append(sem)
                 return self.send_json(200, {"report": out})
+
+        # Relatorio diario: quantos leads chegaram e quantos foram qualificados
+        if path == "/api/report/diario" and method == "GET":
+            if not gestor:
+                return self.send_json(403, {"error": "Relatório disponível só para gerente/administrador"})
+            try:
+                dias = min(int((qs.get("dias") or ["30"])[0]), 180)
+            except ValueError:
+                dias = 30
+            with _lock:
+                por_dia = {}
+
+                def bucket(d):
+                    return por_dia.setdefault(d, {
+                        "dia": d, "recebidos": 0, "recebidos_chatwoot": 0,
+                        "qualificados": 0, "produtores": 0, "prestadores": 0,
+                        "ganhos": 0, "perdidos": 0})
+
+                for l in _db["leads"]:
+                    d = dia_brt(l.get("created_at"))
+                    if d:
+                        b = bucket(d)
+                        b["recebidos"] += 1
+                        if l.get("source") == "chatwoot":
+                            b["recebidos_chatwoot"] += 1
+                    dq = dia_brt(l.get("qualificado_em"))
+                    if dq:
+                        b = bucket(dq)
+                        b["qualificados"] += 1
+                        if l.get("tipo") == "produtor":
+                            b["produtores"] += 1
+                        elif l.get("tipo") == "prestador":
+                            b["prestadores"] += 1
+                    if l.get("status") == "ganho":
+                        dg = dia_brt(l.get("updated_at"))
+                        if dg:
+                            bucket(dg)["ganhos"] += 1
+                    elif l.get("status") == "perdido":
+                        dp = dia_brt(l.get("updated_at"))
+                        if dp:
+                            bucket(dp)["perdidos"] += 1
+
+                linhas = sorted(por_dia.values(), key=lambda r: r["dia"], reverse=True)[:dias]
+                totais = {"recebidos": sum(r["recebidos"] for r in linhas),
+                          "recebidos_chatwoot": sum(r["recebidos_chatwoot"] for r in linhas),
+                          "qualificados": sum(r["qualificados"] for r in linhas),
+                          "ganhos": sum(r["ganhos"] for r in linhas)}
+                return self.send_json(200, {"report": linhas, "totais": totais})
 
         # Equipe (visao dos usuarios com papel de raia: SDRs e vendedores).
         # Leitura para todos (nomes das raias); criacao/edicao so gestores —
@@ -1383,8 +1470,10 @@ class Handler(BaseHTTPRequestHandler):
                     lead["vendedor"] = user["nome"]
                     lead["responsavel"] = user["nome"]
                     if lead.get("status") not in VENDAS_STATUSES:
-                        lead["status"] = "produtor"
-                        lead["tipo"] = "produtor"
+                        lead["status"] = "qualificado"
+                        if not lead.get("tipo"):
+                            lead["tipo"] = "produtor"
+                        lead["qualificado_em"] = now_iso()
                 if not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip():
                     return self.send_json(400, {"error": "Telefone e e-mail são obrigatórios"})
                 dup, campo = find_duplicado(lead["telefone"], lead["email"])

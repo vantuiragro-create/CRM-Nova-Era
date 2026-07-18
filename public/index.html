@@ -21,6 +21,7 @@
     <div class="actions">
       <span class="user-chip" id="userChip"></span>
       <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar</button>
+      <button class="btn ghost" id="btnReport" title="Relatório diário" hidden>📊 Relatório</button>
       <button class="btn ghost" id="btnCampaigns" title="Campanhas" hidden>📣 Campanhas</button>
       <button class="btn ghost" id="btnUsers" title="Usuários e acessos" hidden>👥 Usuários</button>
       <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
@@ -32,7 +33,8 @@
   <div class="toolbar">
     <div class="view-tabs" role="tablist">
       <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
-      <button class="view-tab" id="tabVendas" role="tab">💼 Funil Vendas</button>
+      <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
+      <button class="view-tab" id="tabPrestador" role="tab">🔧 Prestadores</button>
       <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
     </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
@@ -168,6 +170,32 @@
         <div class="spacer"></div>
         <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
         <button class="btn primary" id="btnSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Relatório diário -->
+  <div class="modal-backdrop" id="reportBackdrop" hidden>
+    <div class="modal wide" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>📊 Relatório diário</h2>
+        <button class="icon-btn" id="reportClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note">Leads que chegaram por dia (do Chatwoot e demais origens) e quantos
+          o SDR qualificou. Use para acompanhar o volume de entrada e a produtividade da triagem.</p>
+        <div class="report-controls">
+          <label class="inline">Período
+            <select id="reportDias">
+              <option value="7">Últimos 7 dias</option>
+              <option value="30" selected>Últimos 30 dias</option>
+              <option value="90">Últimos 90 dias</option>
+            </select>
+          </label>
+          <button class="btn primary small" id="btnReportCsv" type="button">⬇️ Baixar CSV</button>
+        </div>
+        <div id="reportTotals" class="report-totals"></div>
+        <div id="reportBody" class="camp-report"></div>
       </div>
     </div>
   </div>
