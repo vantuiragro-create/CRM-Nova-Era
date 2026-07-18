@@ -181,6 +181,116 @@ function cidadeValida(valor) {
   return cidadesSet.has(valor.toLowerCase().trim());
 }
 
+// ---------------------------------------------------------------------------
+// Mapa de clientes
+// ---------------------------------------------------------------------------
+let cidadesGeo = {};   // "Nome - UF" -> [lat, lng] (centro do município, IBGE)
+let map = null;        // instância Leaflet (criada no 1º acesso à aba)
+let markersLayer = null;
+let currentView = 'board';
+
+async function loadCidadesGeo() {
+  try {
+    const res = await fetch('cidades_geo.json');
+    cidadesGeo = await res.json();
+  } catch (err) { console.error('Falha ao carregar coordenadas das cidades:', err); }
+}
+
+// Espalha pinos aproximados da mesma cidade (determinístico por id) para não
+// ficarem todos empilhados no mesmo ponto.
+function jitter(id, amp) {
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const ang = (h % 360) * Math.PI / 180;
+  const raio = amp * (0.35 + ((h >>> 9) % 650) / 1000);
+  return [raio * Math.cos(ang), raio * Math.sin(ang)];
+}
+
+function leadPosition(lead) {
+  if (lead.lat != null && lead.lng != null) return { pos: [lead.lat, lead.lng], exato: true };
+  const c = cidadesGeo[lead.regiao];
+  if (!c) return null; // sem cidade reconhecida: fica fora do mapa
+  const [dx, dy] = jitter(lead.id, 0.01); // ~1 km em volta do centro
+  return { pos: [c[0] + dx, c[1] + dy], exato: false };
+}
+
+function ensureMap() {
+  if (map) return;
+  map = L.map('map').setView([-15.8, -52.5], 5); // Brasil central
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap',
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+}
+
+async function salvarLocalizacao(lead, lat, lng) {
+  try {
+    await api('/api/leads/' + encodeURIComponent(lead.id), {
+      method: 'PATCH', body: JSON.stringify({ lat, lng }),
+    });
+    lead.lat = lat; lead.lng = lng;
+    toast('📍 Localização exata salva' + (lead.nome ? ' — ' + lead.nome : ''));
+  } catch (err) {
+    toast('Erro ao salvar localização: ' + err.message);
+  }
+  renderMap();
+}
+
+function renderMap() {
+  if (!map) return;
+  markersLayer.clearLayers();
+  const bounds = [];
+  for (const lead of leadsCache) {
+    const loc = leadPosition(lead);
+    if (!loc) continue;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="lead-pin ${loc.exato ? 'exato' : 'aprox'}"></div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    const mk = L.marker(loc.pos, { icon, draggable: true });
+
+    const pop = el('div', 'map-popup');
+    pop.append(el('div', 'pp-nome', lead.nome || '(sem nome)'));
+    if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · aproximado')));
+    if (lead.produto) pop.append(el('div', 'pp-linha', '📦 ' + lead.produto));
+    if (lead.valor > 0) pop.append(el('div', 'pp-linha', '💰 ' + brl(lead.valor)));
+    const resp = lead.vendedor || lead.sdr;
+    if (resp) pop.append(el('div', 'pp-linha', '👤 ' + resp));
+    const acao = el('span', 'pp-acao', 'Abrir lead');
+    acao.onclick = () => { map.closePopup(); openModal(lead); };
+    pop.append(acao);
+    mk.bindPopup(pop);
+
+    mk.on('dragend', () => {
+      const p = mk.getLatLng();
+      salvarLocalizacao(lead, Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6)));
+    });
+    mk.addTo(markersLayer);
+    bounds.push(loc.pos);
+  }
+  // enquadra os pinos na primeira renderização com dados
+  if (bounds.length && !renderMap._fitted) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 11 });
+    renderMap._fitted = true;
+  }
+}
+
+function setView(view) {
+  currentView = view;
+  $('#tabBoard').classList.toggle('active', view === 'board');
+  $('#tabMap').classList.toggle('active', view === 'map');
+  $('#boardWrap').hidden = view !== 'board';
+  $('#mapWrap').hidden = view !== 'map';
+  if (view === 'map') {
+    ensureMap();
+    // o container acabou de ficar visível; o Leaflet precisa remedir
+    setTimeout(() => { map.invalidateSize(); renderMap(); }, 60);
+  }
+}
+
 async function loadLeads() {
   const params = new URLSearchParams();
   if (currentFilters.q) params.set('q', currentFilters.q);
@@ -189,6 +299,7 @@ async function loadLeads() {
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
   renderBoard();
+  if (currentView === 'map') renderMap();
 }
 
 async function refreshAll() {
@@ -725,6 +836,9 @@ document.addEventListener('keydown', (e) => {
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
 });
 
+$('#tabBoard').addEventListener('click', () => setView('board'));
+$('#tabMap').addEventListener('click', () => setView('map'));
+
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));
@@ -739,6 +853,7 @@ $('#filterCanal').addEventListener('change', (e) => { currentFilters.canal = e.t
 $('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); });
 
 loadCidades();
+loadCidadesGeo();
 
 // mostra uma dica só uma vez por carregamento
 let _toastedOnce = false;

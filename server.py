@@ -55,7 +55,7 @@ EDITABLE = {
     "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
-    "utm_term", "status", "observacoes",
+    "utm_term", "status", "observacoes", "lat", "lng",
 }
 
 # Canais aceitos para campanhas cadastradas
@@ -184,6 +184,8 @@ def make_lead(partial=None):
         "utm_term": "",
         "status": "novo",
         "observacoes": "",
+        "lat": None,   # localizacao exata da fazenda (ajustada no mapa);
+        "lng": None,   # None = usar o centro da cidade (regiao) como aproximacao
         "last_message": "",
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -223,6 +225,19 @@ def apply_updates(lead, updates):
                 v = 0.0
             # NaN/Infinity passam no float() mas quebrariam o JSON do banco
             lead["valor"] = v if math.isfinite(v) else 0.0
+            continue
+        if key in ("lat", "lng"):
+            if value in ("", None):
+                lead[key] = None  # volta a usar o centro da cidade
+                continue
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("Coordenada inválida")
+            limite = 90 if key == "lat" else 180
+            if not math.isfinite(v) or abs(v) > limite:
+                raise ValueError("Coordenada inválida")
+            lead[key] = round(v, 6)
             continue
         lead[key] = value
 

@@ -52,6 +52,23 @@ automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequênc
 - **Contato obrigatório:** cadastro manual exige telefone + e-mail, e nenhum
   lead entra em **Proposta/Ganho** sem os dois preenchidos (nota fiscal). Leads
   do webhook entram sem e-mail normalmente — o SDR completa na triagem.
+
+### 🗺️ Aba Mapa (banco de localizações dos clientes)
+
+A aba **Mapa** (ao lado de Quadro) mostra cada lead como um pino:
+
+- 🟠 **Aproximado** — o lead tem só a cidade preenchida; o pino fica no centro
+  do município (coordenadas oficiais do IBGE, já embutidas).
+- 🟢 **Fazenda exata** — o vendedor **arrastou o pino** até a fazenda do
+  cliente; a coordenada é salva no banco na hora.
+
+Fluxo: o SDR preenche a cidade → o pino aparece laranja → na visita/conversa o
+vendedor arrasta o pino até a fazenda → vira verde e fica registrado. Com o
+tempo, isso forma o mapa real da sua carteira de clientes. Clique num pino para
+ver os dados e abrir o lead. A busca e o filtro por canal também valem no mapa.
+
+> O mapa usa OpenStreetMap (gratuito) e precisa de internet para carregar o
+> fundo; os pinos e coordenadas são todos locais.
 - **Filtro por raia** no topo mostra só uma pessoa (útil para cobrar cada um).
 - **+ Novo lead** cadastra manualmente; **busca** e **filtro por canal** no topo.
 - O painel **atualiza sozinho a cada 15s** — leads novos do Chatwoot aparecem

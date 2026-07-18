@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CRM Agro — Leads do Chatwoot</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>" />
 </head>
@@ -26,6 +27,10 @@
   </header>
 
   <div class="toolbar">
+    <div class="view-tabs" role="tablist">
+      <button class="view-tab active" id="tabBoard" role="tab">🗂 Quadro</button>
+      <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
+    </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
     <select id="filterCanal">
       <option value="">Todos os canais</option>
@@ -45,6 +50,17 @@
   <main class="board-wrap" id="boardWrap">
     <div class="swimboard" id="swimboard"><!-- swimlanes via JS --></div>
   </main>
+
+  <main class="map-wrap" id="mapWrap" hidden>
+    <div class="map-legend">
+      <span><span class="pin-dot aprox"></span> Aproximado (centro da cidade)</span>
+      <span><span class="pin-dot exato"></span> Fazenda exata (ajustada)</span>
+      <span class="map-hint">Arraste um pino até a fazenda do cliente para salvar a localização exata.</span>
+    </div>
+    <div id="map"></div>
+  </main>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
 
   <!-- Modal de detalhe / edição do lead -->
   <div class="modal-backdrop" id="modalBackdrop" hidden>

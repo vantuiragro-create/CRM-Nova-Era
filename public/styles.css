@@ -93,6 +93,44 @@ body {
 .toolbar input[type="search"] { flex: 1; min-width: 200px; }
 .toolbar .hint { color: var(--muted); font-size: 12px; margin-left: auto; }
 
+/* ---------- Abas Quadro/Mapa ---------- */
+.view-tabs { display: flex; gap: 4px; background: #e9ede9; border-radius: 10px; padding: 3px; }
+.view-tab {
+  font: inherit; font-weight: 700; font-size: 13px; border: none; cursor: pointer;
+  padding: 7px 14px; border-radius: 8px; background: transparent; color: var(--muted);
+}
+.view-tab.active { background: #fff; color: var(--green-700); box-shadow: 0 1px 2px rgba(20,53,31,0.12); }
+
+/* ---------- Mapa ---------- */
+.map-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 0 22px 18px; }
+.map-legend {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--ink); padding: 8px 2px;
+}
+.map-legend .map-hint { color: var(--muted); margin-left: auto; }
+.pin-dot {
+  display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35); vertical-align: -2px;
+}
+.pin-dot.aprox { background: #ed8936; }
+.pin-dot.exato { background: var(--green-600); }
+#map { flex: 1; min-height: 0; border-radius: var(--radius); box-shadow: var(--shadow); }
+
+/* pino no mapa (divIcon do Leaflet) */
+.lead-pin {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2.5px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  cursor: grab;
+}
+.lead-pin.aprox { background: #ed8936; }
+.lead-pin.exato { background: var(--green-600); }
+.map-popup .pp-nome { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+.map-popup .pp-linha { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.map-popup .pp-acao {
+  margin-top: 8px; display: inline-block; font-size: 12px; font-weight: 700;
+  color: var(--green-700); cursor: pointer; text-decoration: underline;
+}
+
 /* ---------- Quadro swimlane ---------- */
 .board-wrap { flex: 1; overflow: auto; padding: 0 0 24px; }
 .swimboard {
