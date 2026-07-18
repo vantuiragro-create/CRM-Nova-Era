@@ -217,10 +217,31 @@ function leadPosition(lead) {
 function ensureMap() {
   if (map) return;
   map = L.map('map').setView([-15.8, -52.5], 5); // Brasil central
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+
+  // Satélite (Esri World Imagery) + nomes de cidades/divisas por cima
+  const satelite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19, attribution: 'Imagens © Esri, Maxar, Earthstar Geographics' }
+  );
+  const nomes = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19 }
+  );
+  const sateliteComNomes = L.layerGroup([satelite, nomes]);
+
+  // Alternativa: mapa de ruas (OpenStreetMap)
+  const ruas = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap',
-  }).addTo(map);
+  });
+
+  sateliteComNomes.addTo(map); // satélite é o padrão
+  L.control.layers(
+    { '🛰️ Satélite': sateliteComNomes, '🗺️ Ruas': ruas },
+    null,
+    { position: 'topright' }
+  ).addTo(map);
+
   markersLayer = L.layerGroup().addTo(map);
 }
 
