@@ -343,6 +343,14 @@ label input:focus, label select:focus, label textarea:focus {
 .camp-report tr.best td { background: #eafaf0; }
 .tag.campanha { background: #f3e8fd; color: var(--purple); }
 
+/* ---------- Importação ---------- */
+#importFile { font: inherit; margin: 6px 0 12px; width: 100%; }
+.import-actions { margin-bottom: 12px; }
+.import-result .import-ok { color: var(--green-700); font-weight: 700; margin-top: 6px; }
+.import-result .import-bad { color: var(--amber); font-weight: 700; margin-top: 10px; }
+.import-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); max-height: 180px; overflow-y: auto; }
+.import-list li { margin-bottom: 3px; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);

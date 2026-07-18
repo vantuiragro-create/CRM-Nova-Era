@@ -19,6 +19,7 @@
     </div>
     <div class="stats" id="stats"><!-- preenchido via JS --></div>
     <div class="actions">
+      <button class="btn ghost" id="btnImport" title="Importar leads em massa">⬆️ Importar</button>
       <button class="btn ghost" id="btnCampaigns" title="Campanhas">📣 Campanhas</button>
       <button class="btn ghost" id="btnTeam" title="Equipe">👥 Equipe</button>
       <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
@@ -28,7 +29,8 @@
 
   <div class="toolbar">
     <div class="view-tabs" role="tablist">
-      <button class="view-tab active" id="tabBoard" role="tab">🗂 Quadro</button>
+      <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
+      <button class="view-tab" id="tabVendas" role="tab">💼 Funil Vendas</button>
       <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
     </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
@@ -164,6 +166,28 @@
         <div class="spacer"></div>
         <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
         <button class="btn primary" id="btnSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Importação em massa -->
+  <div class="modal-backdrop" id="importBackdrop" hidden>
+    <div class="modal narrow" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>⬆️ Importar leads</h2>
+        <button class="icon-btn" id="importClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note">Envie uma planilha <b>CSV</b> (o Excel salva nesse formato:
+          <i>Arquivo → Salvar como → CSV</i>). Colunas aceitas: <b>nome, telefone, email</b>,
+          regiao, area_cultivada, produto, valor, sdr, vendedor, canal, campanha, observacoes.
+          Telefone e e-mail são obrigatórios; duplicados são pulados e listados no final.</p>
+        <p><a id="importTemplate" class="pp-acao" download="modelo-leads.csv">⬇️ Baixar planilha modelo</a></p>
+        <input type="file" id="importFile" accept=".csv,text/csv" />
+        <div class="import-actions">
+          <button class="btn primary" id="btnImportRun" type="button">Importar</button>
+        </div>
+        <div id="importResult" class="import-result"></div>
       </div>
     </div>
   </div>

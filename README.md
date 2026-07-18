@@ -36,16 +36,26 @@ Para **parar**, feche a janela do terminal ou aperte `Ctrl + C`.
 **SDRs** e **vendedores**. Os leads novos do Chatwoot são distribuídos
 automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequência).
 
-- **Raias (linhas)** = cada SDR/vendedor tem sua faixa com o próprio mini-funil.
-  O rótulo à esquerda mostra quantos leads, quantos ganhos e o valor em aberto.
-- **Colunas** = etapas: Novo (SDR) → Em triagem (SDR) → Produtor rural →
-  Em negociação → Proposta enviada → Fechado (ganho) → Perdido, e a coluna
-  separada **Prestador / fora do perfil**.
-- **Arraste um card** para outra célula: ao soltar na raia de um **vendedor** na
-  coluna **Produtor rural**, o lead é qualificado como produtor **e** reatribuído
-  ao vendedor de uma vez só.
+São **dois funis separados** (abas no topo), cada um com raias por pessoa:
+
+- **📞 Funil SDR** (raias = SDRs): `Novo lead → Em triagem → ✅ Qualificado`,
+  mais as colunas **Prestador / fora do perfil** e **Perdido na triagem**.
+  Ao arrastar para **Qualificado**, o lead sai deste funil e entra no de
+  Vendas. O rótulo do SDR mostra: na fila, qualificados e fora do perfil.
+- **💼 Funil Vendas** (raias = vendedores): `🌾 Recebido do SDR → Em negociação
+  → Proposta enviada → Fechado (ganho)` e **Perdido (não fechou)**. Leads
+  qualificados chegam em "Sem responsável" — o vendedor arrasta para a própria
+  raia para assumir. O rótulo mostra leads, ganhos e R$ em aberto.
 - **Clique num card** para classificar (produtor/prestador), definir SDR e
   vendedor, mudar a etapa e editar todos os dados.
+- **Anti-duplicado:** o sistema recusa cadastrar/editar um lead com telefone ou
+  e-mail que já existe (compara ignorando formatação, +55/DDD e o 9º dígito do
+  celular). Cliente conhecido que abre conversa nova no Chatwoot **não vira
+  lead duplicado** — o CRM reconhece pelo contato/telefone e, se ele estava
+  "perdido", volta para a triagem.
+- **⬆️ Importar:** botão no topo para importação em massa via planilha **CSV**
+  (baixe o modelo no próprio painel). Linhas duplicadas ou sem telefone/e-mail
+  são puladas e listadas no relatório da importação.
 - **Padronização:** a Região usa a lista oficial de municípios do IBGE
   (autocompletar — digite e escolha; grafia é corrigida sozinha) e o Produto é
   lista fechada (T25P, T70P, T55, T100, Peças e Serviços).
@@ -55,7 +65,7 @@ automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequênc
 
 ### 🗺️ Aba Mapa (banco de localizações dos clientes)
 
-A aba **Mapa** (ao lado de Quadro) mostra cada lead como um pino:
+A aba **Mapa** (ao lado dos funis) mostra cada lead como um pino:
 
 - 🟠 **Aproximado** — o lead tem só a cidade preenchida; o pino fica no centro
   do município (coordenadas oficiais do IBGE, já embutidas).

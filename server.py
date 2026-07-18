@@ -11,6 +11,8 @@ Webhook do Chatwoot: http://localhost:3000/webhook/chatwoot?token=SEU_TOKEN
 (o token aparece no terminal quando o servidor inicia)
 """
 
+import csv
+import io
 import json
 import math
 import os
@@ -20,6 +22,7 @@ import hashlib
 import secrets
 import threading
 import time
+import unicodedata
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -211,6 +214,8 @@ def apply_updates(lead, updates):
         if key in ("telefone", "email") and not str(value or "").strip() and str(lead.get(key) or "").strip():
             campo = "Telefone" if key == "telefone" else "E-mail"
             raise ValueError("%s é obrigatório e não pode ficar vazio" % campo)
+        if key == "telefone" and str(value or "").strip() and len(norm_phone(value)) < 8:
+            raise ValueError("Telefone inválido — informe DDD e número")
         if key == "produto" and value and value not in PRODUTOS:
             raise ValueError("Produto inválido — escolha um da lista")
         if key == "regiao" and value and _CIDADES_CANON:
@@ -271,6 +276,164 @@ def apply_updates(lead, updates):
 
     lead["updated_at"] = now_iso()
     return lead
+
+
+def norm_phone(v):
+    return re.sub(r"[^0-9]", "", str(v or ""))
+
+
+def _canon_br(d):
+    """Forma canonica para comparacao de numero brasileiro: remove o DDI 55 e
+    o 9º dígito do celular (o WhatsApp ora inclui, ora omite esse 9)."""
+    if d.startswith("55") and len(d) in (12, 13):
+        d = d[2:]
+    if len(d) == 11 and d[2] == "9":  # DDD + 9 + 8 digitos
+        d = d[:2] + d[3:]
+    return d
+
+
+def same_phone(a, b):
+    """Mesmo numero ignorando formatacao, +55/DDD e o 9º dígito do celular."""
+    da, db = norm_phone(a), norm_phone(b)
+    if not da or not db:
+        return False
+    if da == db:
+        return True
+    ca, cb = _canon_br(da), _canon_br(db)
+    if ca == cb:
+        return True
+    # tolera um numero gravado com DDD e outro sem, desde que a parte comum
+    # seja longa o bastante para nao confundir clientes diferentes
+    if min(len(ca), len(cb)) >= 10:
+        return ca.endswith(cb) or cb.endswith(ca)
+    return False
+
+
+def find_duplicado(telefone, email, exclude_id=None):
+    """Procura outro lead com o mesmo telefone (ou e-mail). Retorna (lead, campo)."""
+    email_n = str(email or "").strip().lower()
+    for l in _db["leads"]:
+        if exclude_id and l["id"] == exclude_id:
+            continue
+        if telefone and same_phone(l.get("telefone"), telefone):
+            return l, "telefone"
+        if email_n and str(l.get("email") or "").strip().lower() == email_n:
+            return l, "e-mail"
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Importacao em massa (CSV)
+# ---------------------------------------------------------------------------
+def _slug_header(h):
+    """Normaliza cabecalho de coluna: 'Região do Produtor' -> 'regiaodoprodutor'."""
+    s = unicodedata.normalize("NFD", str(h or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+# nomes de coluna aceitos -> campo do lead
+IMPORT_COLS = {
+    "nome": "nome", "cliente": "nome", "produtor": "nome", "nomedoprodutor": "nome",
+    "telefone": "telefone", "celular": "telefone", "whatsapp": "telefone",
+    "fone": "telefone", "telefonewhatsapp": "telefone",
+    "email": "email", "emailnf": "email",
+    "regiao": "regiao", "cidade": "regiao", "municipio": "regiao", "regiaodoprodutor": "regiao",
+    "area": "area_cultivada", "areacultivada": "area_cultivada",
+    "produto": "produto", "produtodeinteresse": "produto",
+    "valor": "valor", "valorestimado": "valor", "valorestimadors": "valor",
+    "sdr": "sdr", "vendedor": "vendedor", "vendedorresponsavel": "vendedor",
+    "canal": "origem_canal", "origemcanal": "origem_canal", "origem": "origem_canal",
+    "campanha": "campanha",
+    "observacoes": "observacoes", "observacao": "observacoes", "obs": "observacoes",
+    "status": "status", "etapa": "status",
+}
+
+
+def _parse_valor_br(texto):
+    """Aceita '250000', '250000.50' e o formato brasileiro '250.000,50'."""
+    t = str(texto or "").strip().replace("R$", "").strip()
+    if not t:
+        return 0.0
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    try:
+        v = float(t)
+    except ValueError:
+        return 0.0
+    return v if math.isfinite(v) else 0.0
+
+
+def importar_csv(texto):
+    """Importa leads de um CSV. Retorna (criados, rejeitados). Chamar SEM o lock."""
+    primeira = texto.splitlines()[0] if texto.splitlines() else ""
+    delim = ";" if primeira.count(";") >= primeira.count(",") else ","
+    reader = csv.DictReader(io.StringIO(texto), delimiter=delim)
+    if not reader.fieldnames:
+        raise ValueError("Cabeçalho não encontrado no arquivo")
+    campos = {orig: IMPORT_COLS.get(_slug_header(orig)) for orig in reader.fieldnames}
+    if "telefone" not in campos.values():
+        raise ValueError("O CSV precisa ter uma coluna de telefone (e de preferência nome e email)")
+
+    criados = 0
+    rejeitados = []
+    with _lock:
+        for i, row in enumerate(reader, start=2):  # linha 1 = cabecalho
+            if criados >= 2000:
+                rejeitados.append({"linha": i, "motivo": "limite de 2000 leads por importação — divida o arquivo"})
+                break
+            dados = {}
+            for orig, alvo in campos.items():
+                if alvo and row.get(orig) is not None:
+                    dados[alvo] = str(row.get(orig) or "").strip()
+            if not any(dados.values()):
+                continue  # linha vazia
+            nome = dados.get("nome", "")
+            tel = dados.get("telefone", "")
+            email = dados.get("email", "")
+            if not tel or not email:
+                rejeitados.append({"linha": i, "motivo": "%s: sem telefone e/ou e-mail (obrigatórios)" % (nome or "(sem nome)")})
+                continue
+            if len(norm_phone(tel)) < 8:
+                rejeitados.append({"linha": i, "motivo": "%s: telefone inválido (%s)" % (nome or "(sem nome)", tel)})
+                continue
+            dup, campo_dup = find_duplicado(tel, email)
+            if dup:
+                rejeitados.append({"linha": i, "motivo": "%s: mesmo %s de \"%s\" (duplicado)" % (
+                    nome or tel, campo_dup, dup.get("nome") or "lead existente")})
+                continue
+
+            lead = make_lead({"source": "importacao"})
+            lead["nome"] = nome
+            lead["telefone"] = tel
+            lead["email"] = email
+            # tolerante como o webhook: padroniza quando reconhece, aceita quando nao
+            reg = dados.get("regiao", "")
+            lead["regiao"] = canon_cidade(reg) or reg
+            prod = dados.get("produto", "")
+            for p in PRODUTOS:
+                if prod and prod.lower() == p.lower():
+                    prod = p
+                    break
+            lead["produto"] = prod
+            lead["valor"] = _parse_valor_br(dados.get("valor"))
+            lead["area_cultivada"] = dados.get("area_cultivada", "")
+            lead["sdr"] = dados.get("sdr", "")
+            lead["vendedor"] = dados.get("vendedor", "")
+            lead["responsavel"] = lead["vendedor"] or lead["sdr"]
+            lead["origem_canal"] = dados.get("origem_canal", "")
+            lead["campanha"] = dados.get("campanha", "")
+            lead["observacoes"] = dados.get("observacoes", "")
+            st = dados.get("status", "").lower()
+            lead["status"] = st if st in STAGES else "novo"
+            if lead["status"] == "prestador":
+                lead["tipo"] = "prestador"
+            elif lead["status"] in PRODUTOR_STAGES:
+                lead["tipo"] = "produtor"
+            _db["leads"].append(lead)
+            criados += 1
+        if criados:
+            save_db()
+    return criados, rejeitados
 
 
 def active_members(papel=None):
@@ -569,6 +732,23 @@ def handle_chatwoot_event(payload):
         if conversation_id is not None:
             lead = next((l for l in _db["leads"] if l.get("chatwoot_conversation_id") == conversation_id), None)
 
+        # Cliente conhecido abrindo conversa NOVA: reconhece pelo id do contato
+        # ou pelo telefone e atualiza o lead existente em vez de duplicar
+        # (adota a conversa nova para as proximas mensagens chegarem certo).
+        if lead is None and (contact_id is not None or telefone):
+            lead = next((l for l in _db["leads"] if (
+                (contact_id is not None and l.get("chatwoot_contact_id") == contact_id)
+                or (telefone and same_phone(l.get("telefone"), telefone)))), None)
+            if lead is not None:
+                if conversation_id is not None:
+                    lead["chatwoot_conversation_id"] = conversation_id
+                # cliente que estava dado como perdido/fora do perfil voltou:
+                # reentra na triagem para a equipe enxergar
+                if lead.get("status") in ("perdido", "prestador"):
+                    lead["status"] = "novo"
+                print("[webhook] conversa nova %s reconhecida -> lead %s" % (
+                    conversation_id, lead.get("nome") or lead["id"]))
+
         if lead is None:
             if conversation_id is None and not telefone and not email:
                 return {"ok": False, "reason": "evento sem dados de contato"}
@@ -597,6 +777,14 @@ def handle_chatwoot_event(payload):
                     lead["last_message"] = value
                 continue
             if value and not lead.get(key):
+                # nao preenche telefone/email que criaria duplicata com OUTRO lead
+                if key in ("telefone", "email"):
+                    d, _campo = find_duplicado(
+                        value if key == "telefone" else None,
+                        value if key == "email" else None,
+                        exclude_id=lead["id"])
+                    if d:
+                        continue
                 lead[key] = value
         lead["updated_at"] = now_iso()
         save_db()
@@ -909,6 +1097,22 @@ class Handler(BaseHTTPRequestHandler):
             leads.sort(key=lambda l: l.get("updated_at") or "", reverse=True)
             return self.send_json(200, {"leads": leads, "stages": STAGES})
 
+        # Importacao em massa (ANTES da rota por id: 'import' casaria no regex)
+        if path == "/api/leads/import" and method == "POST":
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            csv_texto = body.get("csv")
+            if not isinstance(csv_texto, str) or not csv_texto.strip():
+                return self.send_json(400, {"error": "Envie o conteúdo do arquivo CSV"})
+            try:
+                criados, rejeitados = importar_csv(csv_texto)
+            except ValueError as e:
+                return self.send_json(400, {"error": str(e)})
+            print("[importacao] %d lead(s) criados, %d rejeitados" % (criados, len(rejeitados)))
+            return self.send_json(200, {"criados": criados, "rejeitados": rejeitados})
+
         # Criar
         if path == "/api/leads" and method == "POST":
             try:
@@ -923,6 +1127,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"error": str(e)})
                 if not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip():
                     return self.send_json(400, {"error": "Telefone e e-mail são obrigatórios"})
+                dup, campo = find_duplicado(lead["telefone"], lead["email"])
+                if dup:
+                    return self.send_json(400, {"error": "Já existe um lead com esse %s: %s" % (
+                        campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
                 _db["leads"].append(lead)
                 save_db()
                 return self.send_json(201, {"lead": lead})
@@ -949,6 +1157,16 @@ class Handler(BaseHTTPRequestHandler):
                         apply_updates(tentativa, body)
                     except ValueError as e:
                         return self.send_json(400, {"error": str(e)})
+                    if "telefone" in body or "email" in body:
+                        # checa SO o campo alterado: um duplicado pre-existente
+                        # no OUTRO campo nao pode travar esta edicao
+                        dup, campo = find_duplicado(
+                            tentativa.get("telefone") if "telefone" in body else None,
+                            tentativa.get("email") if "email" in body else None,
+                            exclude_id=lead["id"])
+                        if dup:
+                            return self.send_json(400, {"error": "Outro lead já usa esse %s: %s" % (
+                                campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
                     lead.update(tentativa)
                     save_db()
                     return self.send_json(200, {"lead": lead})

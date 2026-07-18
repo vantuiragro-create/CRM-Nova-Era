@@ -1,17 +1,51 @@
 'use strict';
 
-// Etapas do funil (as chaves batem com o servidor)
+// Rótulos das etapas (usados no seletor do modal; as chaves batem com o servidor)
 const STAGE_LABELS = {
-  novo: 'Novo (SDR)',
+  novo: 'Novo lead (SDR)',
   triagem: 'Em triagem (SDR)',
-  produtor: 'Produtor rural',
-  negociacao: 'Em negociação',
-  proposta: 'Proposta enviada',
+  produtor: 'Qualificado / Recebido (Vendas)',
+  negociacao: 'Em negociação (Vendas)',
+  proposta: 'Proposta enviada (Vendas)',
   ganho: 'Fechado (ganho)',
   perdido: 'Perdido',
   prestador: 'Prestador / fora do perfil',
 };
 let STAGES = ['novo', 'triagem', 'produtor', 'negociacao', 'proposta', 'ganho', 'perdido', 'prestador'];
+
+// Dois funis separados: o do SDR (primeiro contato/qualificação) e o de
+// Vendas. O mesmo lead nunca aparece nos dois — ao ser qualificado, ele sai
+// do funil SDR e entra no de Vendas (coluna "Recebido do SDR").
+const FUNIS = {
+  sdr: {
+    stages: ['novo', 'triagem', 'produtor', 'prestador', 'perdido'],
+    labels: {
+      novo: 'Novo lead',
+      triagem: 'Em triagem',
+      produtor: '✅ Qualificado → Vendas',
+      prestador: 'Prestador / fora do perfil',
+      perdido: 'Perdido na triagem',
+    },
+    papel: 'sdr',
+    campo: 'sdr',
+    inclui: (l) => ['novo', 'triagem', 'prestador'].includes(l.status || 'novo') ||
+      (l.status === 'perdido' && l.tipo !== 'produtor'),
+  },
+  vendas: {
+    stages: ['produtor', 'negociacao', 'proposta', 'ganho', 'perdido'],
+    labels: {
+      produtor: '🌾 Recebido do SDR',
+      negociacao: 'Em negociação',
+      proposta: 'Proposta enviada',
+      ganho: 'Fechado (ganho)',
+      perdido: 'Perdido (não fechou)',
+    },
+    papel: 'vendedor',
+    campo: 'vendedor',
+    inclui: (l) => ['produtor', 'negociacao', 'proposta', 'ganho'].includes(l.status) ||
+      (l.status === 'perdido' && l.tipo === 'produtor'),
+  },
+};
 
 let leadsCache = [];
 let members = [];
@@ -50,12 +84,9 @@ async function api(path, opts) {
   return res.status === 204 ? null : res.json();
 }
 
-// Dono atual do lead: vendedor tem prioridade; senão o SDR.
-function ownerOf(lead) {
-  return (lead.vendedor && lead.vendedor.trim()) || (lead.sdr && lead.sdr.trim()) || '';
-}
-function laneKeyForLead(lead) {
-  return ownerOf(lead) || '__none__';
+// Dono do lead DENTRO de um funil (SDR no funil SDR, vendedor no de Vendas)
+function laneKeyForLead(lead, funil) {
+  return String(lead[funil.campo] || '').trim() || '__none__';
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +218,7 @@ function cidadeValida(valor) {
 let cidadesGeo = {};   // "Nome - UF" -> [lat, lng] (centro do município, IBGE)
 let map = null;        // instância Leaflet (criada no 1º acesso à aba)
 let markersLayer = null;
-let currentView = 'board';
+let currentView = 'sdr'; // 'sdr' | 'vendas' | 'map'
 
 async function loadCidadesGeo() {
   try {
@@ -301,14 +332,17 @@ function renderMap() {
 
 function setView(view) {
   currentView = view;
-  $('#tabBoard').classList.toggle('active', view === 'board');
+  $('#tabSDR').classList.toggle('active', view === 'sdr');
+  $('#tabVendas').classList.toggle('active', view === 'vendas');
   $('#tabMap').classList.toggle('active', view === 'map');
-  $('#boardWrap').hidden = view !== 'board';
+  $('#boardWrap').hidden = view === 'map';
   $('#mapWrap').hidden = view !== 'map';
   if (view === 'map') {
     ensureMap();
     // o container acabou de ficar visível; o Leaflet precisa remedir
     setTimeout(() => { map.invalidateSize(); renderMap(); }, 60);
+  } else {
+    renderBoard();
   }
 }
 
@@ -340,24 +374,22 @@ async function refreshAll() {
 // ---------------------------------------------------------------------------
 // Raias (swimlanes)
 // ---------------------------------------------------------------------------
-function buildLanes() {
-  const sdrs = members.filter((m) => m.ativo !== false && m.papel === 'sdr');
-  const vends = members.filter((m) => m.ativo !== false && m.papel === 'vendedor');
-  const lanes = [];
-  const seen = new Set();
-  for (const m of [...sdrs, ...vends]) {
-    lanes.push({ key: m.nome, nome: m.nome, papel: m.papel });
-    seen.add(m.nome);
-  }
+function buildLanes(funil, leadsFunil) {
+  // Raias = pessoas do papel deste funil (SDRs no funil SDR, vendedores no de Vendas)
+  const lanes = members
+    .filter((m) => m.ativo !== false && m.papel === funil.papel)
+    .map((m) => ({ key: m.nome, nome: m.nome, papel: m.papel }));
+  const seen = new Set(lanes.map((l) => l.key));
   // Donos que aparecem nos leads mas não são membros ativos (ex.: desativados)
-  const extra = new Set();
-  for (const l of leadsCache) {
-    const o = ownerOf(l);
-    if (o && !seen.has(o)) extra.add(o);
+  for (const l of leadsFunil) {
+    const dono = String(l[funil.campo] || '').trim();
+    if (dono && !seen.has(dono)) {
+      seen.add(dono);
+      lanes.push({ key: dono, nome: dono, papel: 'outro' });
+    }
   }
-  for (const o of extra) lanes.push({ key: o, nome: o, papel: 'outro' });
-  // Raia coringa para leads sem responsável
-  const hasOrphan = leadsCache.some((l) => !ownerOf(l));
+  // Raia coringa para leads sem responsável neste funil
+  const hasOrphan = leadsFunil.some((l) => !String(l[funil.campo] || '').trim());
   if (hasOrphan || lanes.length === 0) {
     lanes.push({ key: '__none__', nome: 'Sem responsável', papel: 'outro', isNone: true });
   }
@@ -375,29 +407,31 @@ function updateLaneFilter(lanes) {
 }
 
 function renderBoard() {
+  if (currentView === 'map') return;
+  const funil = FUNIS[currentView] || FUNIS.sdr;
   const board = $('#swimboard');
   board.innerHTML = '';
-  // o nº de colunas segue as etapas vindas do servidor (não fixar no CSS)
-  board.style.gridTemplateColumns = `var(--lane-w) repeat(${STAGES.length}, var(--col-w))`;
+  board.style.gridTemplateColumns = `var(--lane-w) repeat(${funil.stages.length}, var(--col-w))`;
 
-  let lanes = buildLanes();
+  const leadsFunil = leadsCache.filter(funil.inclui);
+  let lanes = buildLanes(funil, leadsFunil);
   updateLaneFilter(lanes);
   const visibleLanes = currentFilters.lane ? lanes.filter((l) => l.key === currentFilters.lane) : lanes;
 
-  // Cabeçalho: canto + colunas
+  // Cabeçalho: canto + colunas deste funil
   board.append(el('div', 'corner'));
-  for (const stage of STAGES) {
+  for (const stage of funil.stages) {
     const h = el('div', `col-h st-${stage}`);
-    h.append(el('span', 'dot'), document.createTextNode(STAGE_LABELS[stage] || stage));
+    h.append(el('span', 'dot'), document.createTextNode(funil.labels[stage] || stage));
     board.append(h);
   }
 
   // Uma linha por raia
   for (const lane of visibleLanes) {
-    const laneLeads = leadsCache.filter((l) => laneKeyForLead(l) === lane.key);
-    board.append(renderLaneLabel(lane, laneLeads));
-    for (const stage of STAGES) {
-      board.append(renderCell(lane, stage, laneLeads.filter((l) => (l.status || 'novo') === stage)));
+    const laneLeads = leadsFunil.filter((l) => laneKeyForLead(l, funil) === lane.key);
+    board.append(renderLaneLabel(lane, funil));
+    for (const stage of funil.stages) {
+      board.append(renderCell(lane, stage, laneLeads.filter((l) => (l.status || 'novo') === stage), funil));
     }
   }
 
@@ -406,7 +440,7 @@ function renderBoard() {
   }
 }
 
-function renderLaneLabel(lane, laneLeads) {
+function renderLaneLabel(lane, funil) {
   const box = el('div', 'lane-label');
   const name = el('div', 'lane-name');
   name.append(document.createTextNode(lane.nome));
@@ -415,21 +449,30 @@ function renderLaneLabel(lane, laneLeads) {
   name.append(badge);
   box.append(name);
 
-  const ganhos = laneLeads.filter((l) => l.status === 'ganho').length;
-  const emAberto = laneLeads
-    .filter((l) => !['perdido', 'prestador', 'ganho'].includes(l.status))
-    .reduce((a, l) => a + (Number(l.valor) || 0), 0);
-
+  // Placar da pessoa calculado sobre TODOS os leads dela (mesmo os que já
+  // saíram deste funil — ex.: qualificados do SDR que foram para Vendas)
+  const todos = leadsCache.filter((l) => laneKeyForLead(l, funil) === lane.key);
   const metrics = el('div', 'lane-metrics');
   const m1 = el('div');
-  m1.innerHTML = `<b>${laneLeads.length}</b> leads · <b>${ganhos}</b> ganhos`;
-  const m2 = el('div', null, brl(emAberto) + ' em aberto');
-  metrics.append(m1, m2);
+  if (funil.campo === 'sdr') {
+    const naFila = todos.filter((l) => ['novo', 'triagem'].includes(l.status || 'novo')).length;
+    const qualificados = todos.filter((l) => l.tipo === 'produtor').length;
+    const prestadores = todos.filter((l) => l.tipo === 'prestador').length;
+    m1.innerHTML = `<b>${naFila}</b> na fila · <b>${qualificados}</b> qualificados`;
+    metrics.append(m1, el('div', null, `${prestadores} fora do perfil`));
+  } else {
+    const ganhos = todos.filter((l) => l.status === 'ganho').length;
+    const emAberto = todos
+      .filter((l) => ['produtor', 'negociacao', 'proposta'].includes(l.status))
+      .reduce((a, l) => a + (Number(l.valor) || 0), 0);
+    m1.innerHTML = `<b>${todos.filter(funil.inclui).length}</b> leads · <b>${ganhos}</b> ganhos`;
+    metrics.append(m1, el('div', null, brl(emAberto) + ' em aberto'));
+  }
   box.append(metrics);
   return box;
 }
 
-function renderCell(lane, stage, cellLeads) {
+function renderCell(lane, stage, cellLeads, funil) {
   const cell = el('div', `cell st-${stage}`);
   cell.dataset.stage = stage;
   cell.dataset.lane = lane.key;
@@ -442,7 +485,7 @@ function renderCell(lane, stage, cellLeads) {
     e.preventDefault();
     cell.classList.remove('drop-hover');
     const id = e.dataTransfer.getData('text/plain');
-    dropLead(id, lane, stage);
+    dropLead(id, lane, stage, funil);
   });
   return cell;
 }
@@ -474,16 +517,14 @@ function renderCard(lead) {
   return card;
 }
 
-// Arrastar um card para outra raia/etapa
-async function dropLead(id, lane, stage) {
+// Arrastar um card para outra raia/etapa (dentro do funil ativo)
+async function dropLead(id, lane, stage, funil) {
   const lead = leadsCache.find((l) => l.id === id);
   if (!lead) return;
 
   const patch = { status: stage };
-  if (lane.isNone) { patch.sdr = ''; patch.vendedor = ''; }
-  else if (lane.papel === 'vendedor') patch.vendedor = lane.nome;
-  else if (lane.papel === 'sdr') { patch.sdr = lane.nome; patch.vendedor = ''; }
-  else patch.vendedor = lane.nome;
+  // no funil SDR a raia define o SDR; no de Vendas, o vendedor
+  patch[funil.campo] = lane.isNone ? '' : lane.nome;
 
   const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo };
   Object.assign(lead, patch);
@@ -495,8 +536,12 @@ async function dropLead(id, lane, stage) {
   try {
     await api('/api/leads/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(patch) });
     loadStats();
-    const dest = lane.isNone ? 'Sem responsável' : lane.nome;
-    toast(`→ ${STAGE_LABELS[stage]} · ${dest}`);
+    if (funil.campo === 'sdr' && stage === 'produtor') {
+      toast('🌾 Qualificado! O lead foi para o funil de Vendas (Sem responsável)');
+    } else {
+      const dest = lane.isNone ? 'Sem responsável' : lane.nome;
+      toast(`→ ${funil.labels[stage] || stage} · ${dest}`);
+    }
   } catch (err) {
     Object.assign(lead, before);
     renderBoard();
@@ -781,6 +826,57 @@ $('#btnSaveWa').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Importação em massa
+// ---------------------------------------------------------------------------
+const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;sdr;vendedor;canal;campanha;observacoes';
+const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verde - GO;500 ha;T70P;250000;;;;;cliente antigo';
+$('#importTemplate').href = 'data:text/csv;charset=utf-8,' +
+  encodeURIComponent('﻿' + IMPORT_HEADER + '\n' + IMPORT_EXEMPLO + '\n');
+
+$('#btnImport').addEventListener('click', () => {
+  $('#importResult').innerHTML = '';
+  $('#importFile').value = '';
+  $('#importBackdrop').hidden = false;
+});
+$('#importClose').addEventListener('click', () => { $('#importBackdrop').hidden = true; });
+$('#importBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#importBackdrop')) $('#importBackdrop').hidden = true;
+});
+
+$('#btnImportRun').addEventListener('click', async () => {
+  const f = $('#importFile').files[0];
+  if (!f) { toast('Escolha o arquivo CSV primeiro'); return; }
+  const buf = await f.arrayBuffer();
+  let texto;
+  try {
+    texto = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (_) {
+    texto = new TextDecoder('windows-1252').decode(buf); // Excel antigo (pt-BR)
+  }
+  const btn = $('#btnImportRun');
+  btn.disabled = true;
+  btn.textContent = 'Importando…';
+  try {
+    const res = await api('/api/leads/import', { method: 'POST', body: JSON.stringify({ csv: texto }) });
+    const box = $('#importResult');
+    box.innerHTML = '';
+    box.append(el('div', 'import-ok', `✅ ${res.criados} lead(s) importado(s) com sucesso`));
+    if (res.rejeitados && res.rejeitados.length) {
+      box.append(el('div', 'import-bad', `⚠️ ${res.rejeitados.length} linha(s) puladas:`));
+      const ul = el('ul', 'import-list');
+      for (const r of res.rejeitados) ul.append(el('li', null, `Linha ${r.linha}: ${r.motivo}`));
+      box.append(ul);
+    }
+    refreshAll();
+  } catch (err) {
+    toast('Erro na importação: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar';
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Equipe
 // ---------------------------------------------------------------------------
 function renderTeam() {
@@ -855,9 +951,11 @@ document.addEventListener('keydown', (e) => {
   if (!$('#modalBackdrop').hidden) closeModal();
   if (!$('#teamBackdrop').hidden) { $('#teamBackdrop').hidden = true; refreshAll(); }
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
+  if (!$('#importBackdrop').hidden) $('#importBackdrop').hidden = true;
 });
 
-$('#tabBoard').addEventListener('click', () => setView('board'));
+$('#tabSDR').addEventListener('click', () => setView('sdr'));
+$('#tabVendas').addEventListener('click', () => setView('vendas'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
