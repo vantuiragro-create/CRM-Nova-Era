@@ -103,6 +103,9 @@ body {
 
 /* ---------- Mapa ---------- */
 .map-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 0 22px 18px; }
+/* o atributo hidden precisa vencer o display:flex acima — senão o mapa
+   aparece embaixo do quadro e cobre a tela */
+.map-wrap[hidden] { display: none; }
 .map-legend {
   display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
   font-size: 12.5px; color: var(--ink); padding: 8px 2px;
@@ -114,7 +117,9 @@ body {
 }
 .pin-dot.aprox { background: #ed8936; }
 .pin-dot.exato { background: var(--green-600); }
-#map { flex: 1; min-height: 0; border-radius: var(--radius); box-shadow: var(--shadow); }
+/* isolation: as camadas internas do Leaflet têm z-index alto (400-800);
+   isolar impede que elas passem na frente dos modais do CRM */
+#map { flex: 1; min-height: 0; border-radius: var(--radius); box-shadow: var(--shadow); isolation: isolate; }
 
 /* pino no mapa (divIcon do Leaflet) */
 .lead-pin {
