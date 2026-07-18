@@ -106,21 +106,74 @@ async function loadCidades() {
   } catch (err) { console.error('Falha ao carregar cidades:', err); }
 }
 
-// datalist com 5.571 opções trava o navegador; mostramos só as 15 melhores
-function updateCidadeSuggestions(q) {
-  const dl = $('#cidadesList');
-  dl.innerHTML = '';
+// Dropdown próprio (o datalist nativo falha no Safari): lista as 12 melhores
+// sob o campo; clique ou ↑/↓ + Enter escolhem.
+function buscarCidades(q) {
   q = (q || '').toLowerCase().trim();
-  if (q.length < 2 || !cidades.length) return;
+  if (q.length < 2 || !cidades.length) return [];
   const comeca = [];
   const contem = [];
   for (const c of cidades) {
     const lc = c.toLowerCase();
     if (lc.startsWith(q)) comeca.push(c);
     else if (lc.includes(q)) contem.push(c);
-    if (comeca.length >= 15) break;
+    if (comeca.length >= 12) break;
   }
-  for (const c of [...comeca, ...contem].slice(0, 15)) dl.append(new Option(c));
+  return [...comeca, ...contem].slice(0, 12);
+}
+
+let acSel = -1; // índice destacado no dropdown
+
+function renderCidadeBox(q) {
+  const box = $('#cidadesBox');
+  const matches = buscarCidades(q);
+  acSel = -1;
+  box.innerHTML = '';
+  if (!matches.length) {
+    if ((q || '').trim().length >= 2 && cidades.length) {
+      box.append(el('div', 'ac-empty', 'Nenhuma cidade encontrada — confira a grafia'));
+      box.hidden = false;
+    } else {
+      box.hidden = true;
+    }
+    return;
+  }
+  for (const c of matches) {
+    const item = el('div', 'ac-item', c);
+    // mousedown (não click): dispara antes do blur do input esconder a caixa
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      escolherCidade(c);
+    });
+    box.append(item);
+  }
+  box.hidden = false;
+}
+
+function escolherCidade(c) {
+  form.regiao.value = c;
+  $('#cidadesBox').hidden = true;
+}
+
+function cidadeKeydown(e) {
+  const box = $('#cidadesBox');
+  if (box.hidden) return;
+  const items = [...box.querySelectorAll('.ac-item')];
+  if (!items.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    acSel = e.key === 'ArrowDown'
+      ? (acSel + 1) % items.length
+      : (acSel - 1 + items.length) % items.length;
+    items.forEach((it, i) => it.classList.toggle('sel', i === acSel));
+    items[acSel].scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    escolherCidade(items[acSel >= 0 ? acSel : 0].textContent);
+  } else if (e.key === 'Escape') {
+    e.stopPropagation(); // não deixa o Esc fechar o modal junto
+    box.hidden = true;
+  }
 }
 
 function cidadeValida(valor) {
@@ -388,6 +441,7 @@ function openModal(lead) {
     if (lead.created_at) meta.append(el('div', null, 'Entrou em ' + new Date(lead.created_at).toLocaleString('pt-BR')));
   }
   modalInitial = collectFormValues();
+  $('#cidadesBox').hidden = true;
   $('#modalBackdrop').hidden = false;
 }
 
@@ -671,7 +725,10 @@ document.addEventListener('keydown', (e) => {
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
 });
 
-form.regiao.addEventListener('input', (e) => updateCidadeSuggestions(e.target.value));
+form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
+form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
+form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));
+form.regiao.addEventListener('keydown', cidadeKeydown);
 
 let searchTimer = null;
 $('#search').addEventListener('input', (e) => {

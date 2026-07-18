@@ -227,6 +227,18 @@ label input, label select, label textarea {
 label input:focus, label select:focus, label textarea:focus {
   outline: none; border-color: var(--green-500); box-shadow: 0 0 0 3px var(--green-100);
 }
+/* Autocompletar de cidades (dropdown próprio — datalist nativo falha no Safari) */
+.ac-wrap { position: relative; }
+.ac-box {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 70;
+  background: #fff; border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: var(--shadow); max-height: 224px; overflow-y: auto; margin-top: 3px;
+}
+.ac-box[hidden] { display: none; }
+.ac-item { padding: 9px 12px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink); }
+.ac-item:hover, .ac-item.sel { background: var(--green-100); }
+.ac-empty { padding: 9px 12px; font-size: 12px; color: var(--muted); }
+
 .req { color: var(--danger); font-weight: 700; }
 .req-hint { font-weight: 500; color: var(--muted); text-transform: none; }
 .meta-line { margin-top: 14px; font-size: 11px; color: var(--muted); }

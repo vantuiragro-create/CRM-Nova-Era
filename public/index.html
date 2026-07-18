@@ -75,9 +75,9 @@
           <label>E-mail <span class="req">*</span> <small class="req-hint">(nota fiscal)</small>
             <input name="email" type="email" placeholder="Ex.: produtor@email.com" required />
           </label>
-          <label>Região do produtor
-            <input name="regiao" list="cidadesList" placeholder="Digite e escolha da lista…" autocomplete="off" />
-            <datalist id="cidadesList"></datalist>
+          <label class="ac-wrap">Região do produtor
+            <input name="regiao" placeholder="Digite a cidade e escolha da lista…" autocomplete="off" />
+            <div class="ac-box" id="cidadesBox" hidden></div>
           </label>
           <label>Área cultivada
             <input name="area_cultivada" placeholder="Ex.: 500 ha" />

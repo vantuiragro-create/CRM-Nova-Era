@@ -967,6 +967,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(ext, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
+        # sem cache: apos atualizar o CRM, um recarregar simples ja traz a
+        # versao nova (evita interface velha presa no navegador da equipe)
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(data)
 
