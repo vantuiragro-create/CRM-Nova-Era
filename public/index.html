@@ -69,20 +69,28 @@
           <label class="full">Nome do produtor
             <input name="nome" placeholder="Ex.: João da Silva" />
           </label>
-          <label>Telefone / WhatsApp
-            <input name="telefone" placeholder="Ex.: +55 62 99999-0000" />
+          <label>Telefone / WhatsApp <span class="req">*</span>
+            <input name="telefone" placeholder="Ex.: +55 62 99999-0000" required />
           </label>
-          <label>E-mail
-            <input name="email" type="email" placeholder="opcional" />
+          <label>E-mail <span class="req">*</span> <small class="req-hint">(nota fiscal)</small>
+            <input name="email" type="email" placeholder="Ex.: produtor@email.com" required />
           </label>
           <label>Região do produtor
-            <input name="regiao" placeholder="Ex.: Rio Verde - GO" />
+            <input name="regiao" list="cidadesList" placeholder="Digite e escolha da lista…" autocomplete="off" />
+            <datalist id="cidadesList"></datalist>
           </label>
           <label>Área cultivada
             <input name="area_cultivada" placeholder="Ex.: 500 ha" />
           </label>
           <label>Produto de interesse
-            <input name="produto" placeholder="Ex.: Semente de soja" />
+            <select name="produto">
+              <option value="">—</option>
+              <option>T25P</option>
+              <option>T70P</option>
+              <option>T55</option>
+              <option>T100</option>
+              <option>Peças e Serviços</option>
+            </select>
           </label>
           <label>Valor estimado (R$)
             <input name="valor" type="number" min="0" step="100" placeholder="0" />

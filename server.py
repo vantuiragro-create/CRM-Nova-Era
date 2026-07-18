@@ -61,6 +61,33 @@ EDITABLE = {
 # Canais aceitos para campanhas cadastradas
 CANAIS = ("Meta", "Google", "WhatsApp", "TikTok", "Indicação", "Outro")
 
+# Linha de produtos da empresa (lista fechada no formulario)
+PRODUTOS = ("T25P", "T70P", "T55", "T100", "Peças e Serviços")
+
+# Etapas que exigem telefone + e-mail preenchidos (nota fiscal / fechamento)
+STAGES_EXIGEM_CONTATO = ("proposta", "ganho")
+
+# Municipios oficiais (IBGE), carregados de public/cidades.json no boot.
+# _CIDADES_CANON mapeia minusculo -> forma canonica "Nome - UF".
+_CIDADES_CANON = {}
+
+
+def load_cidades():
+    try:
+        with open(os.path.join(PUBLIC_DIR, "cidades.json"), "r", encoding="utf-8") as f:
+            for nome in json.load(f):
+                _CIDADES_CANON[nome.lower()] = nome
+        print("  %d cidades carregadas (IBGE)" % len(_CIDADES_CANON))
+    except Exception as e:
+        print("AVISO: nao carregou cidades.json (%s) — regiao fica sem validacao" % e)
+
+
+def canon_cidade(valor):
+    """Retorna a forma canonica 'Nome - UF' ou None se nao reconhecida."""
+    if not valor or not _CIDADES_CANON:
+        return None
+    return _CIDADES_CANON.get(str(valor).strip().lower())
+
 MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -170,6 +197,8 @@ PRODUTOR_STAGES = ("produtor", "negociacao", "proposta", "ganho")
 
 
 def apply_updates(lead, updates):
+    """Aplica edicoes manuais. Levanta ValueError com mensagem amigavel quando
+    uma regra de negocio e violada (as rotas devolvem 400 com essa mensagem)."""
     for key, value in updates.items():
         if key not in EDITABLE:
             continue
@@ -177,6 +206,16 @@ def apply_updates(lead, updates):
             continue
         if key == "tipo" and value not in ("", "produtor", "prestador"):
             continue
+        if key in ("telefone", "email") and not str(value or "").strip() and str(lead.get(key) or "").strip():
+            campo = "Telefone" if key == "telefone" else "E-mail"
+            raise ValueError("%s é obrigatório e não pode ficar vazio" % campo)
+        if key == "produto" and value and value not in PRODUTOS:
+            raise ValueError("Produto inválido — escolha um da lista")
+        if key == "regiao" and value and _CIDADES_CANON:
+            canon = canon_cidade(value)
+            if not canon:
+                raise ValueError("Cidade não reconhecida — escolha uma da lista (ex.: Rio Verde - GO)")
+            value = canon  # padroniza a grafia
         if key == "valor":
             try:
                 v = float(value) if value not in ("", None) else 0.0
@@ -193,6 +232,11 @@ def apply_updates(lead, updates):
             lead["tipo"] = "prestador"
         elif lead["status"] in PRODUTOR_STAGES:
             lead["tipo"] = "produtor"
+
+    # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
+    if updates.get("status") in STAGES_EXIGEM_CONTATO and (
+            not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip()):
+        raise ValueError('Para mover para "Proposta"/"Ganho", preencha telefone e e-mail do lead (nota fiscal)')
 
     # Ao definir um vendedor, a posse do lead passa para ele (a menos que o
     # responsavel tenha sido informado explicitamente na mesma atualizacao).
@@ -447,6 +491,12 @@ def handle_chatwoot_event(payload):
     regiao = sender_custom.get("regiao") or sender_custom.get("region") or custom.get("regiao") or ""
     area = sender_custom.get("area_cultivada") or sender_custom.get("area") or custom.get("area_cultivada") or ""
     produto = sender_custom.get("produto") or custom.get("produto") or ""
+    # padroniza grafia sem rejeitar (lead do webhook nunca pode ser perdido)
+    regiao = canon_cidade(regiao) or regiao
+    for p in PRODUTOS:
+        if produto and str(produto).strip().lower() == p.lower():
+            produto = p
+            break
 
     # ---- Atribuicao de campanha ----
     # Rota 1: anuncio Meta clique-pro-WhatsApp (bloco "referral" no evento)
@@ -852,9 +902,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "Corpo invalido"})
             with _lock:
                 lead = make_lead({"source": "manual"})
-                apply_updates(lead, body)
-                if body.get("status") in STAGES:
-                    lead["status"] = body["status"]
+                try:
+                    apply_updates(lead, body)
+                except ValueError as e:
+                    return self.send_json(400, {"error": str(e)})
+                if not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip():
+                    return self.send_json(400, {"error": "Telefone e e-mail são obrigatórios"})
                 _db["leads"].append(lead)
                 save_db()
                 return self.send_json(201, {"lead": lead})
@@ -874,7 +927,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not lead:
                     return self.send_json(404, {"error": "Lead nao encontrado"})
                 if method in ("PATCH", "PUT"):
-                    apply_updates(lead, body)
+                    # aplica numa copia: se uma regra barrar no meio, o lead
+                    # original nao fica meio-editado na memoria
+                    tentativa = dict(lead)
+                    try:
+                        apply_updates(tentativa, body)
+                    except ValueError as e:
+                        return self.send_json(400, {"error": str(e)})
+                    lead.update(tentativa)
                     save_db()
                     return self.send_json(200, {"lead": lead})
                 if method == "DELETE":
@@ -913,6 +973,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     load_db()
+    load_cidades()
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("")
     print("  CRM de Leads do Agro rodando")

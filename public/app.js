@@ -92,6 +92,42 @@ async function loadCampaigns() {
   settings = data.settings || {};
 }
 
+// ---------------------------------------------------------------------------
+// Cidades (IBGE) — autocompletar do campo Região
+// ---------------------------------------------------------------------------
+let cidades = [];
+let cidadesSet = new Set();
+
+async function loadCidades() {
+  try {
+    const res = await fetch('cidades.json');
+    cidades = await res.json();
+    cidadesSet = new Set(cidades.map((c) => c.toLowerCase()));
+  } catch (err) { console.error('Falha ao carregar cidades:', err); }
+}
+
+// datalist com 5.571 opções trava o navegador; mostramos só as 15 melhores
+function updateCidadeSuggestions(q) {
+  const dl = $('#cidadesList');
+  dl.innerHTML = '';
+  q = (q || '').toLowerCase().trim();
+  if (q.length < 2 || !cidades.length) return;
+  const comeca = [];
+  const contem = [];
+  for (const c of cidades) {
+    const lc = c.toLowerCase();
+    if (lc.startsWith(q)) comeca.push(c);
+    else if (lc.includes(q)) contem.push(c);
+    if (comeca.length >= 15) break;
+  }
+  for (const c of [...comeca, ...contem].slice(0, 15)) dl.append(new Option(c));
+}
+
+function cidadeValida(valor) {
+  if (!valor || !cidadesSet.size) return true; // vazio ou lista indisponível: deixa passar
+  return cidadesSet.has(valor.toLowerCase().trim());
+}
+
 async function loadLeads() {
   const params = new URLSearchParams();
   if (currentFilters.q) params.set('q', currentFilters.q);
@@ -333,6 +369,10 @@ function openModal(lead) {
   if (lead.origem_canal && ![...form.origem_canal.options].some((o) => o.value === lead.origem_canal)) {
     form.origem_canal.append(new Option(lead.origem_canal, lead.origem_canal));
   }
+  // mesmo tratamento para produto vindo do webhook fora da linha padrão
+  if (lead.produto && ![...form.produto.options].some((o) => o.value === lead.produto)) {
+    form.produto.append(new Option(lead.produto, lead.produto));
+  }
   const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'produto', 'valor',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
@@ -370,6 +410,15 @@ let modalInitial = {};
 async function saveLead() {
   const all = collectFormValues();
   const id = form.id.value;
+  // regras de preenchimento (o servidor valida de novo, mas avisamos já aqui)
+  if (!id && (!all.telefone.trim() || !all.email.trim())) {
+    toast('Telefone e e-mail são obrigatórios para cadastrar um lead');
+    return;
+  }
+  if (all.regiao && !cidadeValida(all.regiao)) {
+    toast('Cidade não reconhecida — digite e escolha uma da lista');
+    return;
+  }
   // Envia SÓ o que o usuário alterou: mandar o formulário inteiro reverteria
   // campos que o webhook atualizou enquanto o modal estava aberto.
   const data = {};
@@ -622,6 +671,8 @@ document.addEventListener('keydown', (e) => {
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
 });
 
+form.regiao.addEventListener('input', (e) => updateCidadeSuggestions(e.target.value));
+
 let searchTimer = null;
 $('#search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
@@ -629,6 +680,8 @@ $('#search').addEventListener('input', (e) => {
 });
 $('#filterCanal').addEventListener('change', (e) => { currentFilters.canal = e.target.value; loadLeads(); });
 $('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); });
+
+loadCidades();
 
 // mostra uma dica só uma vez por carregamento
 let _toastedOnce = false;

@@ -46,6 +46,12 @@ automaticamente entre os SDRs ativos, em **rodízio** (um para cada, na sequênc
   ao vendedor de uma vez só.
 - **Clique num card** para classificar (produtor/prestador), definir SDR e
   vendedor, mudar a etapa e editar todos os dados.
+- **Padronização:** a Região usa a lista oficial de municípios do IBGE
+  (autocompletar — digite e escolha; grafia é corrigida sozinha) e o Produto é
+  lista fechada (T25P, T70P, T55, T100, Peças e Serviços).
+- **Contato obrigatório:** cadastro manual exige telefone + e-mail, e nenhum
+  lead entra em **Proposta/Ganho** sem os dois preenchidos (nota fiscal). Leads
+  do webhook entram sem e-mail normalmente — o SDR completa na triagem.
 - **Filtro por raia** no topo mostra só uma pessoa (útil para cobrar cada um).
 - **+ Novo lead** cadastra manualmente; **busca** e **filtro por canal** no topo.
 - O painel **atualiza sozinho a cada 15s** — leads novos do Chatwoot aparecem
