@@ -1181,6 +1181,12 @@ function applyRoleUI() {
   $('#btnReport').hidden = !gestor;
   $('#btnCampaigns').hidden = !gestor;
   $('#btnUsers').hidden = me.papel !== 'admin';
+  // aviso de senha padrão (só para o admin que ainda não trocou)
+  if (me.senha_padrao) {
+    const aviso = $('#senhaPadraoAviso');
+    aviso.hidden = false;
+    aviso.onclick = () => { renderTeam(); $('#teamBackdrop').hidden = false; };
+  }
   // vendedor não tem nada no funil SDR; entra direto na aba de Produtores
   if (me.papel === 'vendedor') {
     $('#tabSDR').hidden = true;

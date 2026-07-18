@@ -372,6 +372,14 @@ label input:focus, label select:focus, label textarea:focus {
 .camp-report tr.best td { background: #eafaf0; }
 .tag.campanha { background: #f3e8fd; color: var(--purple); }
 
+/* ---------- Aviso de senha padrão ---------- */
+.warn-bar {
+  background: #fdecea; color: #a12a1c; border-bottom: 1px solid #f5c6bd;
+  padding: 9px 22px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center;
+}
+.warn-bar:hover { background: #fbddd8; }
+.warn-bar[hidden] { display: none; }
+
 /* ---------- Relatório diário ---------- */
 .report-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
 .report-totals { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }

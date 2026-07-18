@@ -32,10 +32,10 @@ from urllib.parse import urlparse, parse_qs
 # ---------------------------------------------------------------------------
 PORT = int(os.environ.get("PORT", "3000"))
 
-# Token do webhook (protege o endpoint). Defina WEBHOOK_TOKEN no ambiente para fixar.
-WEBHOOK_TOKEN = os.environ.get("WEBHOOK_TOKEN") or hashlib.sha256(
-    ("chatwoot-crm-" + os.environ.get("USER", "local")).encode()
-).hexdigest()[:16]
+# Token do webhook (protege o endpoint). Prioridade: variavel de ambiente
+# WEBHOOK_TOKEN; senao, um token aleatorio persistido no banco (settings) na
+# primeira execucao. NUNCA derivado do nome de usuario (seria adivinhavel).
+WEBHOOK_TOKEN = os.environ.get("WEBHOOK_TOKEN") or None  # resolvido no boot
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # DATA_DIR pode ser sobrescrito por variavel de ambiente (ex.: um volume /data
@@ -167,10 +167,15 @@ def load_db():
             # Migracao: a antiga "equipe" (members, sem login) vira usuarios com
             # senha pendente — o admin define a senha de cada um.
             if data.get("members") and not data["users"]:
+                logins_usados = set()
                 for m in data.pop("members"):
+                    login = _slug_login(m.get("nome", ""))
+                    while login in logins_usados:  # desambigua nomes parecidos
+                        login = _slug_login(m.get("nome", "")) + secrets.token_hex(2)
+                    logins_usados.add(login)
                     data["users"].append({
                         "id": m.get("id") or new_id(), "nome": m.get("nome", ""),
-                        "login": _slug_login(m.get("nome", "")), "salt": "", "senha_hash": "",
+                        "login": login, "salt": "", "senha_hash": "",
                         "papel": m.get("papel", "sdr"), "ativo": m.get("ativo", True),
                     })
                 print("  equipe antiga migrada para usuarios (defina as senhas no painel)")
@@ -511,7 +516,9 @@ def verifica_senha(user, senha):
 
 
 def ensure_admin():
-    """Garante que exista ao menos um administrador para dar o primeiro acesso."""
+    """Garante que exista ao menos um administrador para dar o primeiro acesso.
+    A senha padrao fica marcada (senha_padrao=True) para o painel avisar que
+    precisa ser trocada; a flag some quando o admin define uma senha nova."""
     if any(u.get("papel") == "admin" for u in _db["users"]):
         return None
     senha = "novaera123"
@@ -519,9 +526,24 @@ def ensure_admin():
     _db["users"].append({
         "id": new_id(), "nome": "Administrador", "login": "admin",
         "salt": salt, "senha_hash": h, "papel": "admin", "ativo": True,
+        "senha_padrao": True,
     })
     save_db()
     return senha
+
+
+def ensure_webhook_token():
+    """Resolve o token do webhook: env var ou um aleatorio persistido."""
+    global WEBHOOK_TOKEN
+    if WEBHOOK_TOKEN:
+        return WEBHOOK_TOKEN
+    tok = _db.get("settings", {}).get("webhook_token")
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        _db.setdefault("settings", {})["webhook_token"] = tok
+        save_db()
+    WEBHOOK_TOKEN = tok
+    return tok
 
 
 def cria_sessao(user_id):
@@ -546,10 +568,33 @@ def usuario_da_sessao(token):
     return u
 
 
+def nome_em_uso(nome, exclude_id=None):
+    alvo = str(nome or "").strip().lower()
+    return any(str(u.get("nome") or "").strip().lower() == alvo and u["id"] != exclude_id
+               for u in _db.get("users", []))
+
+
+def renomeia_dono_leads(antigo, novo):
+    """A posse do lead e gravada pelo NOME; ao renomear, atualiza todos os leads
+    para o dono nao virar orfao (perder visibilidade e sair do rodizio)."""
+    if not antigo or antigo == novo:
+        return
+    for l in _db["leads"]:
+        for campo in ("sdr", "vendedor", "responsavel"):
+            if l.get(campo) == antigo:
+                l[campo] = novo
+
+
 def user_publico(u):
     return {"id": u["id"], "nome": u["nome"], "login": u["login"],
             "papel": u["papel"], "ativo": u.get("ativo", True),
-            "senha_definida": bool(u.get("senha_hash"))}
+            "senha_definida": bool(u.get("senha_hash")),
+            "senha_padrao": bool(u.get("senha_padrao"))}
+
+
+def settings_publico():
+    """Config exposta ao painel — sem o token do webhook (segredo do servidor)."""
+    return {k: v for k, v in _db.get("settings", {}).items() if k != "webhook_token"}
 
 
 # ---------------------------------------------------------------------------
@@ -1061,13 +1106,20 @@ class Handler(BaseHTTPRequestHandler):
             senha = str(body.get("senha") or "")
             with _lock:
                 u = next((x for x in _db["users"] if x.get("login") == login and x.get("ativo", True)), None)
-                if not u or not verifica_senha(u, senha):
-                    time.sleep(0.4)  # freia adivinhacao de senha
-                    return self.send_json(401, {"error": "Login ou senha incorretos"})
-                token = cria_sessao(u["id"])
-            return self.send_json(200, {"user": user_publico(u)}, headers={
-                "Set-Cookie": "sessao=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d" % (
-                    token, SESSAO_DIAS * 86400)})
+            # A verificacao PBKDF2 e o atraso ocorrem FORA do lock (senao logins
+            # errados em rajada congelariam o CRM inteiro). Quando o login nao
+            # existe, roda um hash "fantasma" para o tempo de resposta nao
+            # denunciar quais logins sao validos.
+            if u and verifica_senha(u, senha):
+                with _lock:
+                    token = cria_sessao(u["id"])
+                return self.send_json(200, {"user": user_publico(u)}, headers={
+                    "Set-Cookie": "sessao=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d" % (
+                        token, SESSAO_DIAS * 86400)})
+            if not u:
+                hash_senha(senha, "00" * 16)  # equaliza o tempo (login inexistente)
+            time.sleep(0.4)  # freia adivinhacao de senha, sem segurar o lock
+            return self.send_json(401, {"error": "Login ou senha incorretos"})
 
         # ---- Daqui em diante, toda rota exige sessao valida ----
         with _lock:
@@ -1111,6 +1163,8 @@ class Handler(BaseHTTPRequestHandler):
                     login = str(body.get("login") or "").strip().lower() or _slug_login(nome)
                     if any(u.get("login") == login for u in _db["users"]):
                         return self.send_json(400, {"error": "Já existe usuário com esse login"})
+                    if nome_em_uso(nome):
+                        return self.send_json(400, {"error": "Já existe usuário com esse nome — use um nome diferente"})
                     salt, h = hash_senha(senha) if senha else ("", "")
                     novo = {"id": new_id(), "nome": nome, "login": login, "salt": salt,
                             "senha_hash": h, "papel": papel, "ativo": True}
@@ -1131,7 +1185,11 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json(404, {"error": "Usuário não encontrado"})
                     if method in ("PATCH", "PUT"):
                         if "nome" in body and str(body["nome"]).strip():
-                            alvo["nome"] = str(body["nome"]).strip()
+                            novo_nome = str(body["nome"]).strip()
+                            if nome_em_uso(novo_nome, exclude_id=alvo["id"]):
+                                return self.send_json(400, {"error": "Já existe usuário com esse nome"})
+                            renomeia_dono_leads(alvo["nome"], novo_nome)  # leads seguem o dono
+                            alvo["nome"] = novo_nome
                         if body.get("papel") in PAPEIS_USUARIO:
                             if alvo["id"] == user["id"] and body["papel"] != "admin":
                                 return self.send_json(400, {"error": "Você não pode rebaixar o próprio acesso"})
@@ -1144,6 +1202,7 @@ class Handler(BaseHTTPRequestHandler):
                             if len(str(body["senha"])) < 6:
                                 return self.send_json(400, {"error": "Senha muito curta (mínimo 6 caracteres)"})
                             alvo["salt"], alvo["senha_hash"] = hash_senha(str(body["senha"]))
+                            alvo.pop("senha_padrao", None)  # deixou de ser a senha padrao
                             # troca de senha derruba sessoes antigas desse usuario
                             _db["sessions"] = {t: s for t, s in _db["sessions"].items()
                                                if s.get("user_id") != alvo["id"]}
@@ -1184,7 +1243,7 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 return self.send_json(200, {
                     "campaigns": list(_db.get("campaigns", [])),
-                    "settings": dict(_db.get("settings", {})),
+                    "settings": settings_publico(),
                 })
 
         if path == "/api/campaigns" and method == "POST":
@@ -1272,7 +1331,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "whatsapp_number" in body:
                     st["whatsapp_number"] = re.sub(r"[^0-9]", "", str(body["whatsapp_number"]))
                 save_db()
-                return self.send_json(200, {"settings": dict(st)})
+                return self.send_json(200, {"settings": settings_publico()})
 
         # Relatorio por campanha (quantos leads/produtores/ganhos e R$ cada uma gerou)
         if path == "/api/report/campanhas" and method == "GET":
@@ -1375,6 +1434,8 @@ class Handler(BaseHTTPRequestHandler):
             if papel not in PAPEIS:
                 return self.send_json(400, {"error": "Papel invalido"})
             with _lock:
+                if nome_em_uso(nome):
+                    return self.send_json(400, {"error": "Já existe alguém com esse nome — use um nome diferente"})
                 login = _slug_login(nome)
                 if any(u.get("login") == login for u in _db["users"]):
                     login = login + secrets.token_hex(2)
@@ -1568,6 +1629,7 @@ def main():
     load_db()
     load_cidades()
     senha_admin = ensure_admin()
+    ensure_webhook_token()
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("")
     print("  CRM Nova Era Drones rodando")
