@@ -107,7 +107,8 @@ async function loadStats() {
     box.innerHTML = '';
     const cards = [
       { n: s.total, l: 'Leads no total' },
-      { n: s.produtores || 0, l: 'Produtores rurais' },
+      { n: s.produtores || 0, l: '🌾 Produtores rurais' },
+      { n: s.prestadores || 0, l: '🔧 Prestadores de serviço' },
       { n: (s.por_status.ganho || {}).count || 0, l: 'Negócios ganhos' },
       { n: brl(s.valor_pipeline), l: 'Valor no pipeline' },
     ];

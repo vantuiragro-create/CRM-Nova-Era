@@ -1230,10 +1230,12 @@ class Handler(BaseHTTPRequestHandler):
                     if l.get("status") != "perdido":
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
+                prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
                 return self.send_json(200, {
                     "total": len(visiveis),
                     "valor_pipeline": total_valor,
                     "produtores": produtores,
+                    "prestadores": prestadores,
                     "por_status": por_status,
                     "stages": STAGES,
                 })
