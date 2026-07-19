@@ -42,7 +42,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # na nuvem), para os leads nao sumirem quando o servidor reinicia.
 DATA_DIR = os.environ.get("DATA_DIR") or os.path.join(BASE_DIR, "data")
 DB_FILE = os.path.join(DATA_DIR, "leads.json")
+FOTOS_DIR = os.path.join(DATA_DIR, "fotos")  # fotos das visitas de campo
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
+
+# Tipos de resultado de visita aceitos
+RESULTADOS_VISITA = (
+    "Interessado — avançar", "Em negociação", "Vai pensar", "Reagendar",
+    "Sem interesse", "Fechou negócio", "Não encontrou o cliente", "Outro",
+)
 
 # Etapas do funil (ordem = ordem das colunas)
 #   novo/triagem          -> fase do SDR (primeiro contato e qualificacao)
@@ -211,6 +218,8 @@ def load_db():
                     l["atendido_em"] = l.get("updated_at") or l.get("created_at")
                 if not isinstance(l.get("formas_pagamento"), list):
                     l["formas_pagamento"] = []
+                if not isinstance(l.get("visitas"), list):
+                    l["visitas"] = []
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -254,6 +263,7 @@ def make_lead(partial=None):
         "decisor": "",        # quem decide/paga (vazio = o proprio contato)
         "decisor_cargo": "",  # cargo do decisor, quando for outra pessoa
         "formas_pagamento": [],  # lista de {tipo, valor} (misto = varias)
+        "visitas": [],           # visitas de campo: {id, data, visitante, resultado, obs, foto}
         "tipo": "",        # ""=nao classificado | "produtor" | "prestador"
         "sdr": "",         # SDR que recebeu/qualificou
         "vendedor": "",    # vendedor responsavel apos qualificar
@@ -294,6 +304,32 @@ def _num_pos(x, teto=None):
     if teto is not None and v > teto:
         v = teto
     return v
+
+
+def salva_foto_visita(data_url, visita_id):
+    """Recebe um data URL (base64) de imagem, valida e grava em fotos/<id>.jpg.
+    Retorna o nome do arquivo ou None. Levanta ValueError se invalida/grande."""
+    if not data_url or not isinstance(data_url, str):
+        return None
+    m = re.match(r"^data:image/(jpeg|jpg|png|webp);base64,(.+)$", data_url, re.DOTALL)
+    if not m:
+        raise ValueError("Formato de imagem inválido")
+    try:
+        raw = base64.b64decode(m.group(2), validate=True)
+    except Exception:
+        raise ValueError("Imagem corrompida")
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("Foto muito grande (máx. 8 MB)")
+    # confere a assinatura do arquivo (nao confia so na extensao)
+    ok = raw[:3] == b"\xff\xd8\xff" or raw[:8] == b"\x89PNG\r\n\x1a\n" or raw[:4] == b"RIFF"
+    if not ok:
+        raise ValueError("Arquivo não é uma imagem válida")
+    ext = "png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else ("webp" if raw[:4] == b"RIFF" else "jpg")
+    nome = "%s.%s" % (visita_id, ext)
+    os.makedirs(FOTOS_DIR, exist_ok=True)
+    with open(os.path.join(FOTOS_DIR, nome), "wb") as f:
+        f.write(raw)
+    return nome
 
 
 def sanitiza_pagamentos(value):
@@ -1105,7 +1141,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return {}
-        if length > 5 * 1024 * 1024:
+        if length > 15 * 1024 * 1024:  # fotos de visita chegam em base64
             raise ValueError("corpo muito grande")
         raw = self.rfile.read(length)
         if not raw:
@@ -1218,6 +1254,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me" and method == "GET":
             return self.send_json(200, {"user": user_publico(user)})
+
+        # ---- Foto de visita (serve o arquivo; exige sessao) ----
+        mf = re.match(r"^/api/foto/([A-Za-z0-9_.-]+)$", path)
+        if mf and method == "GET":
+            nome = mf.group(1)
+            caminho = os.path.join(FOTOS_DIR, nome)
+            if ".." in nome or not os.path.abspath(caminho).startswith(os.path.abspath(FOTOS_DIR)) \
+                    or not os.path.isfile(caminho):
+                return self.send_json(404, {"error": "Foto não encontrada"})
+            with open(caminho, "rb") as f:
+                data = f.read()
+            ext = os.path.splitext(nome)[1].lower()
+            ct = {".png": "image/png", ".webp": "image/webp"}.get(ext, "image/jpeg")
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
+            return
 
         if path == "/api/logout" and method == "POST":
             with _lock:
@@ -1604,6 +1660,68 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": str(e)})
             print("[importacao] %d lead(s) criados, %d rejeitados" % (criados, len(rejeitados)))
             return self.send_json(200, {"criados": criados, "rejeitados": rejeitados})
+
+        # ---- Visitas de campo de um lead ----
+        mv = re.match(r"^/api/leads/([^/]+)/visitas(?:/([^/]+))?$", path)
+        if mv:
+            lead_id, visita_id = mv.group(1), mv.group(2)
+            if method == "POST" and not visita_id:
+                try:
+                    body = self.read_body()
+                except Exception:
+                    return self.send_json(400, {"error": "Corpo invalido"})
+                resultado = str(body.get("resultado") or "").strip()
+                if resultado and resultado not in RESULTADOS_VISITA:
+                    return self.send_json(400, {"error": "Resultado de visita inválido"})
+                vid = new_id()
+                try:
+                    foto = salva_foto_visita(body.get("foto"), vid)
+                except ValueError as e:
+                    return self.send_json(400, {"error": str(e)})
+                with _lock:
+                    lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                    if not lead or not pode_ver_lead(user, lead):
+                        return self.send_json(404, {"error": "Lead nao encontrado"})
+                    visita = {
+                        "id": vid,
+                        "data": now_iso(),
+                        "visitante": user["nome"],
+                        "resultado": resultado,
+                        "obs": str(body.get("obs") or "").strip()[:2000],
+                        "foto": foto,
+                    }
+                    lead.setdefault("visitas", []).append(visita)
+                    # se o vendedor marcou a localizacao durante a visita, atualiza a fazenda
+                    try:
+                        if body.get("lat") not in ("", None) and body.get("lng") not in ("", None):
+                            la, lo = float(body["lat"]), float(body["lng"])
+                            if math.isfinite(la) and math.isfinite(lo) and abs(la) <= 90 and abs(lo) <= 180:
+                                lead["lat"], lead["lng"] = round(la, 6), round(lo, 6)
+                                visita["lat"], visita["lng"] = lead["lat"], lead["lng"]
+                    except (TypeError, ValueError):
+                        pass
+                    lead["updated_at"] = now_iso()
+                    save_db()
+                    return self.send_json(201, {"visita": visita, "total": len(lead["visitas"])})
+
+            if method == "DELETE" and visita_id:
+                with _lock:
+                    lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                    if not lead or not pode_ver_lead(user, lead):
+                        return self.send_json(404, {"error": "Lead nao encontrado"})
+                    v = next((x for x in lead.get("visitas", []) if x["id"] == visita_id), None)
+                    if not v:
+                        return self.send_json(404, {"error": "Visita nao encontrada"})
+                    if not gestor and v.get("visitante") != user["nome"]:
+                        return self.send_json(403, {"error": "Só quem registrou (ou um gestor) pode excluir a visita"})
+                    if v.get("foto"):
+                        try:
+                            os.remove(os.path.join(FOTOS_DIR, v["foto"]))
+                        except OSError:
+                            pass
+                    lead["visitas"] = [x for x in lead["visitas"] if x["id"] != visita_id]
+                    save_db()
+                    return self.send_json(200, {"ok": True, "total": len(lead["visitas"])})
 
         # Criar
         if path == "/api/leads" and method == "POST":

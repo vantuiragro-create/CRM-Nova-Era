@@ -422,6 +422,30 @@ label input:focus, label select:focus, label textarea:focus {
 .import-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); max-height: 180px; overflow-y: auto; }
 .import-list li { margin-bottom: 3px; }
 
+/* ---------- Visitas de campo ---------- */
+.modal-top { z-index: 60; } /* fica acima do modal do lead */
+.visit-count { color: var(--green-700); font-weight: 800; }
+.card .row.visita { color: var(--blue); font-weight: 600; }
+#btnRegistrarVisita { margin-bottom: 8px; }
+.visit-empty { color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+.visit-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin-bottom: 8px;
+}
+.visit-thumb {
+  width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
+  border: 1px solid var(--line); flex-shrink: 0; background: #eee;
+}
+.visit-info { flex: 1; min-width: 0; }
+.visit-res { font-weight: 700; font-size: 13px; }
+.visit-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.visit-obs { font-size: 12px; color: var(--ink); margin-top: 4px; }
+.visit-preview { margin: 8px 0; }
+.visit-preview img { width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; }
+.visit-geo { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 500; text-transform: none; color: var(--ink); }
+.visit-geo input { width: auto; }
+#visitFoto { font: inherit; width: 100%; margin-top: 5px; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -432,4 +456,37 @@ label input:focus, label select:focus, label textarea:focus {
 @media (max-width: 620px) {
   .grid { grid-template-columns: 1fr; }
   .stats { order: 3; width: 100%; }
+}
+
+/* ---------- Celular ---------- */
+@media (max-width: 680px) {
+  .topbar { padding: 10px 12px; gap: 10px; }
+  .brand .logo-img { width: 36px; height: 36px; }
+  .brand h1 { font-size: 17px; }
+  .brand .sub { font-size: 11px; }
+  .stats { order: 3; width: 100%; gap: 7px; }
+  .stat { flex: 1 1 44%; min-width: 0; padding: 6px 10px; }
+  .stat .n { font-size: 15px; }
+  .actions { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .actions .btn { flex: 1 1 auto; padding: 9px 10px; font-size: 13px; }
+  .user-chip { order: -1; width: 100%; text-align: center; }
+  .toolbar { padding: 8px 12px; gap: 8px; }
+  .toolbar input[type="search"], .toolbar select { min-width: 0; width: 100%; flex: 1 1 100%; }
+  .view-tabs { width: 100%; }
+  .view-tab { flex: 1; padding: 8px 6px; font-size: 12px; }
+  .toolbar .hint { display: none; }
+
+  :root { --col-w: 210px; --lane-w: 140px; }
+  .board-wrap { padding: 0 0 20px; }
+  .lane-label { min-height: 80px; }
+
+  /* modais em tela cheia no celular */
+  .modal-backdrop { padding: 0; align-items: stretch; }
+  .modal, .modal.narrow, .modal.wide { width: 100%; max-width: 100%; max-height: 100vh; border-radius: 0; }
+  .modal-body { padding: 14px; }
+  .grid { grid-template-columns: 1fr; }
+  .pay-box { grid-template-columns: 1fr; }
+  .user-add, .camp-add, .team-add { grid-template-columns: 1fr; display: grid; }
+  .map-wrap { padding: 0 8px 12px; }
+  .map-legend { font-size: 11px; gap: 10px; }
 }

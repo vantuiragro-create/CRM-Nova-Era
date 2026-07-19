@@ -564,6 +564,9 @@ function renderLaneLabel(lane, funil) {
       .reduce((a, l) => a + (Number(l.valor) || 0), 0);
     m1.innerHTML = `<b>${doFunil.length}</b> leads · <b>${ganhos}</b> ganhos`;
     metrics.append(m1, el('div', null, brl(emAberto) + ' em aberto'));
+    // total de visitas de campo feitas pelo vendedor desta raia
+    const visitas = todos.reduce((a, l) => a + (l.visitas || []).length, 0);
+    if (visitas) metrics.append(el('div', null, `🚗 ${visitas} visita${visitas > 1 ? 's' : ''}`));
     // tempo médio que este vendedor levou para atender (qualificação → assumir)
     const tempos = doFunil.map((l) => msEntre(l.qualificado_em || l.created_at, l.atendido_em)).filter((v) => v != null && v >= 0);
     if (tempos.length) {
@@ -623,6 +626,14 @@ function renderCard(lead) {
       r.append(el('span', 'ic', '💰'), document.createTextNode(formaDetalhe(f, efet[i], true)));
       card.append(r);
     });
+  }
+  const nVis = (lead.visitas || []).length;
+  if (nVis) {
+    const ult = lead.visitas[lead.visitas.length - 1];
+    const r = el('div', 'row visita');
+    r.append(el('span', 'ic', '🚗'), document.createTextNode(
+      `${nVis} visita${nVis > 1 ? 's' : ''} · última ${dataHora(ult.data)}`));
+    card.append(r);
   }
 
   // entrada (data/hora) e tempo de atendimento do vendedor
@@ -742,6 +753,8 @@ function openModal(lead) {
 
   renderPagamentos(lead.formas_pagamento || []);
   modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
+  renderVisitas(isNew ? null : lead);
+  $('#btnRegistrarVisita').disabled = isNew;
 
   const meta = $('#metaLine');
   meta.innerHTML = '';
@@ -972,6 +985,163 @@ async function deleteLead() {
     toast('Lead excluído');
   } catch (err) { toast('Erro ao excluir: ' + err.message); }
 }
+
+// ---------------------------------------------------------------------------
+// Visitas de campo (foto pela câmera do celular)
+// ---------------------------------------------------------------------------
+let visitFotoData = null; // base64 da foto redimensionada
+
+// Reduz a foto (câmera dá arquivos enormes) para caber no envio
+function resizeImagem(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      const maior = Math.max(width, height);
+      if (maior > maxDim) { const s = maxDim / maior; width = Math.round(width * s); height = Math.round(height * s); }
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não consegui ler a imagem')); };
+    img.src = url;
+  });
+}
+
+function renderVisitas(lead) {
+  const visitas = (lead && lead.visitas) || [];
+  $('#visitCount').textContent = visitas.length ? `(${visitas.length})` : '';
+  const list = $('#visitList');
+  list.innerHTML = '';
+  if (!visitas.length) {
+    list.append(el('div', 'visit-empty', 'Nenhuma visita registrada ainda.'));
+    return;
+  }
+  for (const v of [...visitas].reverse()) {
+    const item = el('div', 'visit-item');
+    if (v.foto) {
+      const a = document.createElement('a');
+      a.href = 'api/foto/' + encodeURIComponent(v.foto);
+      a.target = '_blank';
+      const img = document.createElement('img');
+      img.className = 'visit-thumb';
+      img.src = 'api/foto/' + encodeURIComponent(v.foto);
+      img.alt = 'Foto da fazenda';
+      a.append(img);
+      item.append(a);
+    }
+    const info = el('div', 'visit-info');
+    info.append(el('div', 'visit-res', v.resultado || '(sem resultado)'));
+    const meta = el('div', 'visit-meta');
+    meta.textContent = `👤 ${v.visitante || '—'} · ${dataHora(v.data, true)}`;
+    info.append(meta);
+    if (v.obs) info.append(el('div', 'visit-obs', v.obs));
+    item.append(info);
+    const podeExcluir = me && (me.papel === 'admin' || me.papel === 'gerente' || v.visitante === me.nome);
+    if (podeExcluir) {
+      const del = el('button', 'icon-btn', '🗑️');
+      del.type = 'button';
+      del.title = 'Excluir visita';
+      del.onclick = () => excluirVisita(lead, v.id);
+      item.append(del);
+    }
+    list.append(item);
+  }
+}
+
+function openVisitModal() {
+  const id = form.id.value;
+  if (!id) { toast('Salve o lead primeiro para registrar uma visita'); return; }
+  visitFotoData = null;
+  $('#visitFoto').value = '';
+  $('#visitResultado').value = '';
+  $('#visitObs').value = '';
+  $('#visitGeo').checked = false;
+  $('#visitPreview').hidden = true;
+  $('#visitPreview').innerHTML = '';
+  $('#visitLeadNome').textContent = form.nome.value || 'Lead';
+  $('#visitBackdrop').hidden = false;
+}
+
+$('#visitFoto').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) { visitFotoData = null; $('#visitPreview').hidden = true; return; }
+  try {
+    visitFotoData = await resizeImagem(file, 1280, 0.72);
+    const prev = $('#visitPreview');
+    prev.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = visitFotoData;
+    prev.append(img);
+    prev.hidden = false;
+  } catch (err) { toast('Erro na foto: ' + err.message); }
+});
+
+function pegarLocalizacao() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000 });
+  });
+}
+
+async function salvarVisita() {
+  const id = form.id.value;
+  if (!id) return;
+  const btn = $('#visitSalvar');
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  try {
+    const body = {
+      resultado: $('#visitResultado').value,
+      obs: $('#visitObs').value,
+      foto: visitFotoData || '',
+    };
+    if ($('#visitGeo').checked) {
+      const loc = await pegarLocalizacao();
+      if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+      else toast('Não consegui pegar o GPS — visita salva sem localização');
+    }
+    const res = await api('/api/leads/' + encodeURIComponent(id) + '/visitas', {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    // atualiza o lead em memória e as telas
+    const lead = leadsCache.find((l) => l.id === id);
+    if (lead) {
+      lead.visitas = lead.visitas || [];
+      lead.visitas.push(res.visita);
+      if (body.lat != null) { lead.lat = res.visita.lat; lead.lng = res.visita.lng; }
+      renderVisitas(lead);
+      renderBoard();
+    }
+    $('#visitBackdrop').hidden = true;
+    toast('✅ Visita registrada');
+  } catch (err) {
+    toast('Erro ao salvar visita: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar visita';
+  }
+}
+
+async function excluirVisita(lead, visitaId) {
+  if (!confirm('Excluir esta visita?')) return;
+  try {
+    await api('/api/leads/' + encodeURIComponent(lead.id) + '/visitas/' + encodeURIComponent(visitaId), { method: 'DELETE' });
+    lead.visitas = (lead.visitas || []).filter((v) => v.id !== visitaId);
+    renderVisitas(lead);
+    renderBoard();
+    toast('Visita excluída');
+  } catch (err) { toast('Erro: ' + err.message); }
+}
+
+$('#btnRegistrarVisita').addEventListener('click', openVisitModal);
+$('#visitClose').addEventListener('click', () => { $('#visitBackdrop').hidden = true; });
+$('#visitCancel').addEventListener('click', () => { $('#visitBackdrop').hidden = true; });
+$('#visitSalvar').addEventListener('click', salvarVisita);
 
 // ---------------------------------------------------------------------------
 // Campanhas
@@ -1375,6 +1545,7 @@ document.addEventListener('keydown', (e) => {
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
   if (!$('#importBackdrop').hidden) $('#importBackdrop').hidden = true;
   if (!$('#reportBackdrop').hidden) $('#reportBackdrop').hidden = true;
+  if (!$('#visitBackdrop').hidden) $('#visitBackdrop').hidden = true;
 });
 
 $('#tabSDR').addEventListener('click', () => setView('sdr'));

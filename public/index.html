@@ -206,6 +206,12 @@
           <label class="full">Observações
             <textarea name="observacoes" rows="3" placeholder="Anotações do atendimento…"></textarea>
           </label>
+
+          <div class="section-title full">🚗 Visitas de campo <span id="visitCount" class="visit-count"></span></div>
+          <div class="full">
+            <button class="btn primary small" id="btnRegistrarVisita" type="button">📷 Registrar visita</button>
+          </div>
+          <div class="full" id="visitList"><!-- lista de visitas via JS --></div>
         </div>
         <div class="meta-line" id="metaLine"></div>
       </form>
@@ -214,6 +220,48 @@
         <div class="spacer"></div>
         <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
         <button class="btn primary" id="btnSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Registrar visita (câmera do celular) -->
+  <div class="modal-backdrop modal-top" id="visitBackdrop" hidden>
+    <div class="modal narrow" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>🚗 Registrar visita</h2>
+        <button class="icon-btn" id="visitClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note" id="visitLeadNome"></p>
+        <label>📷 Foto da fazenda
+          <input type="file" id="visitFoto" accept="image/*" capture="environment" />
+        </label>
+        <div id="visitPreview" class="visit-preview" hidden></div>
+        <label>Resultado da visita
+          <select id="visitResultado">
+            <option value="">— selecione —</option>
+            <option>Interessado — avançar</option>
+            <option>Em negociação</option>
+            <option>Vai pensar</option>
+            <option>Reagendar</option>
+            <option>Sem interesse</option>
+            <option>Fechou negócio</option>
+            <option>Não encontrou o cliente</option>
+            <option>Outro</option>
+          </select>
+        </label>
+        <label>Observações da visita
+          <textarea id="visitObs" rows="3" placeholder="O que foi conversado, próximos passos…"></textarea>
+        </label>
+        <label class="visit-geo">
+          <input type="checkbox" id="visitGeo" />
+          Marcar a localização atual como a fazenda deste cliente (usa o GPS do celular)
+        </label>
+      </div>
+      <div class="modal-foot">
+        <div class="spacer"></div>
+        <button class="btn ghost" id="visitCancel" type="button">Cancelar</button>
+        <button class="btn primary" id="visitSalvar" type="button">Salvar visita</button>
       </div>
     </div>
   </div>

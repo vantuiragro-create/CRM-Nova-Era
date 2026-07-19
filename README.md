@@ -80,6 +80,23 @@ São **três funis em abas** (mais o Mapa), cada um com raias por pessoa:
   lead entra em **Proposta/Ganho** sem os dois preenchidos (nota fiscal). Leads
   do webhook entram sem e-mail normalmente — o SDR completa na triagem.
 
+### 🚗 Visitas de campo (foto pela câmera do celular)
+
+O CRM é **responsivo** — funciona no celular do vendedor de campo. Ao abrir um
+lead, a seção **Visitas de campo** tem o botão **📷 Registrar visita**, que abre:
+
+- **Foto da fazenda** — no celular, abre direto a **câmera** (a foto é reduzida
+  no aparelho antes de enviar, para economizar dados). As fotos ficam em
+  `data/fotos/` no servidor (só quem está logado vê).
+- **Resultado da visita** (Interessado, Vai pensar, Fechou negócio, etc.) e
+  **observações**.
+- **Marcar localização atual como a fazenda** — usa o GPS do celular; se marcado,
+  já fixa o ponto exato do cliente no mapa (o vendedor está lá, na fazenda).
+
+Cada card mostra "🚗 N visitas · última data", e a raia de cada vendedor soma o
+total de visitas — assim dá para acompanhar **quantas vezes** cada vendedor foi
+a campo. Excluir uma visita: só quem a registrou (ou um gestor).
+
 ### 🗺️ Aba Mapa (banco de localizações dos clientes)
 
 A aba **Mapa** (ao lado dos funis) mostra cada lead como um pino:
