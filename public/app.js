@@ -741,7 +741,7 @@ function openModal(lead) {
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
 
   renderPagamentos(lead.formas_pagamento || []);
-  modalPagInitial = JSON.stringify(lead.formas_pagamento || []);
+  modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
 
   const meta = $('#metaLine');
   meta.innerHTML = '';
@@ -883,6 +883,23 @@ function collectPagamentos() {
   return out;
 }
 
+// Forma canônica (ordem fixa + 4 chaves) para comparar "mudou ou não" sem
+// falso positivo por ordem/formato do que veio do servidor.
+function canonPagamentos(lista) {
+  const porTipo = {};
+  for (const f of (lista || [])) porTipo[f.tipo] = f;
+  const parcelavel = new Set(PARCELAVEIS);
+  return PAGAMENTOS.filter((t) => porTipo[t]).map((t) => {
+    const f = porTipo[t];
+    return {
+      tipo: t,
+      valor: Number(f.valor) || 0,
+      entrada: parcelavel.has(t) ? (Number(f.entrada) || 0) : 0,
+      parcelas: parcelavel.has(t) ? (parseInt(f.parcelas, 10) || 0) : 0,
+    };
+  });
+}
+
 function updatePayTotal() {
   const rows = [...$('#payBox').querySelectorAll('.pay-row')].filter(
     (r) => r.querySelector('input[type=checkbox]').checked);
@@ -928,9 +945,10 @@ async function saveLead() {
   for (const [k, v] of Object.entries(all)) {
     if (!id || v !== (modalInitial[k] !== undefined ? modalInitial[k] : '')) data[k] = v;
   }
-  // formas de pagamento (não é campo simples do form)
+  // formas de pagamento (não é campo simples do form) — compara canônico para
+  // não reenviar (e evitar reverter mudança concorrente) quando nada mudou
   const pg = collectPagamentos();
-  if (!id || JSON.stringify(pg) !== modalPagInitial) data.formas_pagamento = pg;
+  if (!id || JSON.stringify(canonPagamentos(pg)) !== modalPagInitial) data.formas_pagamento = pg;
   try {
     if (id) {
       if (Object.keys(data).length === 0) { closeModal(); return; }

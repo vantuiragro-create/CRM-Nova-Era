@@ -85,6 +85,11 @@ PAGAMENTOS = (
     "À vista", "Financiamento", "Cartão BNDES", "Cartão de crédito",
     "Permuta / Troca", "Consórcio", "CPR", "Boleto / Parcelado", "Outro",
 )
+# Formas que aceitam entrada + parcelamento (as demais zeram esses campos)
+PARCELAVEIS = frozenset({
+    "Financiamento", "Cartão BNDES", "Cartão de crédito",
+    "Consórcio", "CPR", "Boleto / Parcelado",
+})
 
 # Etapas que exigem telefone + e-mail preenchidos (nota fiscal / fechamento)
 STAGES_EXIGEM_CONTATO = ("proposta", "ganho")
@@ -292,24 +297,27 @@ def _num_pos(x, teto=None):
 
 
 def sanitiza_pagamentos(value):
-    """Aceita uma lista de {tipo, valor, entrada, parcelas}; descarta lixo/NaN.
-    entrada e parcelas so fazem sentido nas formas parceladas."""
+    """Aceita uma lista de {tipo, valor, entrada, parcelas}; descarta lixo/NaN,
+    remove tipos repetidos (pagamento misto = formas distintas) e zera
+    entrada/parcelas nas formas que nao sao parcelaveis."""
     if not isinstance(value, list):
         return []
     out = []
+    vistos = set()
     for item in value:
         if not isinstance(item, dict):
             continue
         tipo = str(item.get("tipo") or "").strip()
-        if tipo not in PAGAMENTOS:
+        if tipo not in PAGAMENTOS or tipo in vistos:
             continue
-        forma = {
+        vistos.add(tipo)
+        parcelavel = tipo in PARCELAVEIS
+        out.append({
             "tipo": tipo,
             "valor": round(_num_pos(item.get("valor")), 2),
-            "entrada": round(_num_pos(item.get("entrada")), 2),
-            "parcelas": int(_num_pos(item.get("parcelas"), teto=360)),
-        }
-        out.append(forma)
+            "entrada": round(_num_pos(item.get("entrada")), 2) if parcelavel else 0.0,
+            "parcelas": int(_num_pos(item.get("parcelas"), teto=360)) if parcelavel else 0,
+        })
     return out
 
 
@@ -539,11 +547,13 @@ def importar_csv(texto):
             # "Financiamento + Permuta" -> duas formas (valores ficam zerados)
             pg = dados.get("pagamento", "")
             if pg:
-                nomes = {p.lower(): p for p in PAGAMENTOS}
+                # casa ignorando espacos: "Permuta/Troca" == "Permuta / Troca"
+                nomes = {re.sub(r"\s+", "", p.lower()): p for p in PAGAMENTOS}
                 # separadores: + ; , (NUNCA "/", pois nomes tem "Permuta / Troca")
-                lead["formas_pagamento"] = [
-                    {"tipo": nomes[t.strip().lower()], "valor": 0.0, "entrada": 0.0, "parcelas": 0}
-                    for t in re.split(r"[+;,]", pg) if t.strip().lower() in nomes]
+                achadas = [nomes[re.sub(r"\s+", "", t.lower())]
+                           for t in re.split(r"[+;,]", pg) if re.sub(r"\s+", "", t.lower()) in nomes]
+                lead["formas_pagamento"] = sanitiza_pagamentos(
+                    [{"tipo": t} for t in achadas])
             lead["sdr"] = dados.get("sdr", "")
             lead["vendedor"] = dados.get("vendedor", "")
             lead["responsavel"] = lead["vendedor"] or lead["sdr"]
