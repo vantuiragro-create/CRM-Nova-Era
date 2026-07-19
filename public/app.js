@@ -617,9 +617,12 @@ function renderCard(lead) {
   }
   const fps = lead.formas_pagamento || [];
   if (fps.length) {
-    const r = el('div', 'row pgto');
-    r.append(el('span', 'ic', '💰'), document.createTextNode(fps.map(formaCurta).join(' + ')));
-    card.append(r);
+    const efet = valoresEfetivos(lead.valor, fps);
+    fps.forEach((f, i) => {
+      const r = el('div', 'row pgto');
+      r.append(el('span', 'ic', '💰'), document.createTextNode(formaDetalhe(f, efet[i], true)));
+      card.append(r);
+    });
   }
 
   // entrada (data/hora) e tempo de atendimento do vendedor
@@ -828,37 +831,41 @@ function renderPagamentos(lista) {
       row.append(pl);
       hint = el('div', 'pay-hint');
       row.append(hint);
-      const upd = () => { atualizaParcelaHint(val, ent, par, hint); updatePayTotal(); };
-      ent.addEventListener('input', upd);
-      par.addEventListener('input', upd);
+      ent.addEventListener('input', updatePayTotal);
+      par.addEventListener('input', updatePayTotal);
     }
 
     chk.addEventListener('change', () => {
       row.classList.toggle('on', chk.checked);
       for (const inp of [val, ent, par]) if (inp) { inp.disabled = !chk.checked; if (!chk.checked) inp.value = ''; }
-      if (hint) atualizaParcelaHint(val, ent, par, hint);
       updatePayTotal();
     });
-    val.addEventListener('input', () => { if (hint) atualizaParcelaHint(val, ent, par, hint); updatePayTotal(); });
+    val.addEventListener('input', updatePayTotal);
     box.append(row);
-    if (hint) atualizaParcelaHint(val, ent, par, hint);
   }
   updatePayTotal();
 }
 
-// Mostra "10x de R$4.500" abaixo da forma parcelada
-function atualizaParcelaHint(val, ent, par, hint) {
-  const total = parseFloat(val.value) || 0;
-  const entrada = parseFloat(ent.value) || 0;
-  const n = parseInt(par.value, 10) || 0;
-  if (n > 0) {
-    const base = Math.max(total - entrada, 0);
-    const parc = base > 0 ? base / n : 0;
-    hint.textContent = (entrada > 0 ? 'Entrada ' + brl(entrada) + ' + ' : '') +
-      n + 'x' + (parc > 0 ? ' de ' + brl(parc) : '');
-  } else {
-    hint.textContent = '';
+// Reparte o valor total do lead entre as formas: quem tem valor informado
+// mantém; a ÚNICA forma sem valor fica com o que sobrar. Assim, marcar só
+// "Boleto 10x" num lead de R$200 mil já vira 10x de R$20 mil.
+function valoresEfetivos(total, formas) {
+  total = Number(total) || 0;
+  const somaInformada = formas.reduce((a, f) => a + (f.valor > 0 ? f.valor : 0), 0);
+  const vazias = formas.filter((f) => !(f.valor > 0)).length;
+  const resto = Math.max(total - somaInformada, 0);
+  return formas.map((f) => (f.valor > 0 ? f.valor : (vazias === 1 ? resto : 0)));
+}
+
+// Texto de uma forma com o parcelamento calculado (ex.: "Boleto: 10x de R$20.000")
+function formaDetalhe(f, valorEfetivo, curto) {
+  if (f.parcelas > 0) {
+    const base = Math.max(valorEfetivo - (f.entrada || 0), 0);
+    const parc = base > 0 ? base / f.parcelas : 0;
+    const ent = f.entrada > 0 ? 'entrada ' + brl(f.entrada) + ' + ' : '';
+    return `${curto ? f.tipo : f.tipo + ':'} ${ent}${f.parcelas}x${parc > 0 ? ' de ' + brl(parc) : ''}`;
   }
+  return f.tipo + (valorEfetivo > 0 ? ': ' + brl(valorEfetivo) : '');
 }
 
 function collectPagamentos() {
@@ -877,22 +884,30 @@ function collectPagamentos() {
 }
 
 function updatePayTotal() {
-  const pg = collectPagamentos();
-  const soma = pg.reduce((a, f) => a + (f.valor || 0), 0);
+  const rows = [...$('#payBox').querySelectorAll('.pay-row')].filter(
+    (r) => r.querySelector('input[type=checkbox]').checked);
+  const formas = rows.map((r) => ({
+    tipo: r.querySelector('.pay-nome').textContent,
+    valor: parseFloat(r.querySelector('.pay-val').value) || 0,
+    entrada: parseFloat(r.querySelector('.pay-ent')?.value) || 0,
+    parcelas: parseInt(r.querySelector('.pay-parcelas')?.value, 10) || 0,
+  }));
+  const total = parseFloat(form.valor.value) || 0;
+  const efet = valoresEfetivos(total, formas);
+  // atualiza o cálculo de parcela de cada forma
+  rows.forEach((r, i) => {
+    const hint = r.querySelector('.pay-hint');
+    if (!hint) return;
+    hint.textContent = formas[i].parcelas > 0 ? formaDetalhe(formas[i], efet[i]) : '';
+  });
   const box = $('#payTotal');
-  if (!pg.length) { box.textContent = ''; return; }
-  const valorLead = parseFloat(form.valor.value) || 0;
-  let txt = 'Formas: ' + pg.map((f) => f.tipo + (f.parcelas ? ` (${f.entrada ? 'entrada + ' : ''}${f.parcelas}x)` : '')).join(' + ');
-  if (soma > 0) txt += ' · soma ' + brl(soma);
-  if (soma > 0 && valorLead > 0 && Math.round(soma) !== Math.round(valorLead)) {
-    txt += ` ⚠️ difere do valor do lead (${brl(valorLead)})`;
+  if (!formas.length) { box.textContent = ''; return; }
+  const soma = efet.reduce((a, v) => a + v, 0);
+  let txt = 'Negociação: ' + formas.map((f, i) => formaDetalhe(f, efet[i])).join('  +  ');
+  if (soma > 0 && total > 0 && Math.round(soma) !== Math.round(total)) {
+    txt += ` · ⚠️ soma ${brl(soma)} difere do valor (${brl(total)})`;
   }
   box.textContent = txt;
-}
-
-// Texto curto de uma forma para o card (ex.: "Boleto / Parcelado 10x")
-function formaCurta(f) {
-  return f.tipo + (f.parcelas ? ' ' + (f.entrada ? 'entr.+' : '') + f.parcelas + 'x' : '');
 }
 
 async function saveLead() {
@@ -1349,6 +1364,8 @@ $('#tabProdutor').addEventListener('click', () => setView('produtor'));
 $('#tabPrestador').addEventListener('click', () => setView('prestador'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 
+// mudar o valor do lead recalcula as parcelas das formas de pagamento
+form.valor.addEventListener('input', updatePayTotal);
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));
