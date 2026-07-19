@@ -601,6 +601,12 @@ function renderCard(lead) {
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
   if (lead.produto) { const r = el('div', 'row'); r.append(el('span', 'ic', '📦'), document.createTextNode(lead.produto)); card.append(r); }
+  if (lead.cargo) { const r = el('div', 'row'); r.append(el('span', 'ic', '🧑‍💼'), document.createTextNode('Contato: ' + lead.cargo)); card.append(r); }
+  if (lead.decisor) {
+    const r = el('div', 'row decisor');
+    r.append(el('span', 'ic', '💳'), document.createTextNode('Decide: ' + lead.decisor + (lead.decisor_cargo ? ' (' + lead.decisor_cargo + ')' : '')));
+    card.append(r);
+  }
 
   // entrada (data/hora) e tempo de atendimento do vendedor
   const rEnt = el('div', 'row'); rEnt.append(el('span', 'ic', '🕐'), document.createTextNode('Entrou: ' + dataHora(lead.created_at)));
@@ -713,6 +719,7 @@ function openModal(lead) {
     form.produto.append(new Option(lead.produto, lead.produto));
   }
   const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'produto', 'valor',
+    'cargo', 'decisor', 'decisor_cargo',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
 
@@ -1029,8 +1036,8 @@ $('#btnReportCsv').addEventListener('click', baixarReportCsv);
 // ---------------------------------------------------------------------------
 // Importação em massa
 // ---------------------------------------------------------------------------
-const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;sdr;vendedor;canal;campanha;observacoes';
-const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verde - GO;500 ha;T70P;250000;;;;;cliente antigo';
+const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;cargo;decisor;sdr;vendedor;canal;campanha;observacoes';
+const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verde - GO;500 ha;T70P;250000;Agrônomo;Proprietário (pai);;;;;cliente antigo';
 $('#importTemplate').href = 'data:text/csv;charset=utf-8,' +
   encodeURIComponent('﻿' + IMPORT_HEADER + '\n' + IMPORT_EXEMPLO + '\n');
 

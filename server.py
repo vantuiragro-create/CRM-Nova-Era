@@ -68,6 +68,7 @@ SESSAO_DIAS = 30
 
 EDITABLE = {
     "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
+    "cargo", "decisor", "decisor_cargo",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
     "utm_term", "status", "observacoes", "lat", "lng",
@@ -236,6 +237,9 @@ def make_lead(partial=None):
         "area_cultivada": "",
         "produto": "",
         "valor": 0,
+        "cargo": "",          # cargo de QUEM entrou em contato
+        "decisor": "",        # quem decide/paga (vazio = o proprio contato)
+        "decisor_cargo": "",  # cargo do decisor, quando for outra pessoa
         "tipo": "",        # ""=nao classificado | "produtor" | "prestador"
         "sdr": "",         # SDR que recebeu/qualificou
         "vendedor": "",    # vendedor responsavel apos qualificar
@@ -403,6 +407,8 @@ IMPORT_COLS = {
     "regiao": "regiao", "cidade": "regiao", "municipio": "regiao", "regiaodoprodutor": "regiao",
     "area": "area_cultivada", "areacultivada": "area_cultivada",
     "produto": "produto", "produtodeinteresse": "produto",
+    "cargo": "cargo", "cargodocontato": "cargo", "funcao": "cargo",
+    "decisor": "decisor", "quemdecide": "decisor", "quempaga": "decisor",
     "valor": "valor", "valorestimado": "valor", "valorestimadors": "valor",
     "sdr": "sdr", "vendedor": "vendedor", "vendedorresponsavel": "vendedor",
     "canal": "origem_canal", "origemcanal": "origem_canal", "origem": "origem_canal",
@@ -480,6 +486,8 @@ def importar_csv(texto):
             lead["produto"] = prod
             lead["valor"] = _parse_valor_br(dados.get("valor"))
             lead["area_cultivada"] = dados.get("area_cultivada", "")
+            lead["cargo"] = dados.get("cargo", "")
+            lead["decisor"] = dados.get("decisor", "")
             lead["sdr"] = dados.get("sdr", "")
             lead["vendedor"] = dados.get("vendedor", "")
             lead["responsavel"] = lead["vendedor"] or lead["sdr"]
@@ -864,6 +872,8 @@ def handle_chatwoot_event(payload):
     regiao = sender_custom.get("regiao") or sender_custom.get("region") or custom.get("regiao") or ""
     area = sender_custom.get("area_cultivada") or sender_custom.get("area") or custom.get("area_cultivada") or ""
     produto = sender_custom.get("produto") or custom.get("produto") or ""
+    cargo = sender_custom.get("cargo") or custom.get("cargo") or ""
+    decisor = sender_custom.get("decisor") or custom.get("decisor") or ""
     # padroniza grafia sem rejeitar (lead do webhook nunca pode ser perdido)
     regiao = canon_cidade(regiao) or regiao
     for p in PRODUTOS:
@@ -907,6 +917,8 @@ def handle_chatwoot_event(payload):
         "regiao": regiao,
         "area_cultivada": area,
         "produto": produto,
+        "cargo": cargo,
+        "decisor": decisor,
         "origem_canal": canal,
         "campanha": campanha_nome,
         "campanha_id": campanha_id,
@@ -1497,7 +1509,7 @@ class Handler(BaseHTTPRequestHandler):
             if q:
                 def match(l):
                     blob = " ".join(str(l.get(k) or "") for k in
-                                    ("nome", "telefone", "email", "regiao", "produto", "campanha", "vendedor")).lower()
+                                    ("nome", "telefone", "email", "regiao", "produto", "campanha", "vendedor", "cargo", "decisor")).lower()
                     return q in blob
                 leads = [l for l in leads if match(l)]
             if canal:

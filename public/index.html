@@ -101,6 +101,30 @@
           <label>E-mail <span class="req">*</span> <small class="req-hint">(nota fiscal)</small>
             <input name="email" type="email" placeholder="Ex.: produtor@email.com" required />
           </label>
+
+          <div class="section-title full">👤 Contato e decisão de compra</div>
+          <label>Cargo de quem entrou em contato
+            <input name="cargo" list="cargosList" placeholder="Ex.: Agrônomo, Gerente, Filho do dono…" autocomplete="off" />
+            <datalist id="cargosList">
+              <option value="Proprietário"></option>
+              <option value="Sócio"></option>
+              <option value="Gerente da fazenda"></option>
+              <option value="Administrador"></option>
+              <option value="Agrônomo(a)"></option>
+              <option value="Operador de drone"></option>
+              <option value="Funcionário"></option>
+              <option value="Filho(a) do proprietário"></option>
+              <option value="Cônjuge"></option>
+              <option value="Consultor"></option>
+              <option value="Prestador de serviço"></option>
+            </datalist>
+          </label>
+          <label>Quem decide / paga a compra
+            <input name="decisor" placeholder="Deixe vazio se for o próprio contato" />
+          </label>
+          <label class="full">Cargo/relação de quem decide <small class="req-hint">(se for outra pessoa)</small>
+            <input name="decisor_cargo" placeholder="Ex.: Proprietário, pai do contato, sócio majoritário…" />
+          </label>
           <label class="ac-wrap">Região do produtor
             <input name="regiao" placeholder="Digite a cidade e escolha da lista…" autocomplete="off" />
             <div class="ac-box" id="cidadesBox" hidden></div>
