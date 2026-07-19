@@ -82,8 +82,8 @@ PRODUTOS = ("T25P", "T70P", "T55", "T100", "Peças e Serviços")
 
 # Formas de pagamento aceitas (um lead pode combinar varias = pagamento misto)
 PAGAMENTOS = (
-    "À vista", "Financiamento", "Cartão BNDES", "Permuta / Troca",
-    "Consórcio", "CPR", "Boleto / Parcelado", "Outro",
+    "À vista", "Financiamento", "Cartão BNDES", "Cartão de crédito",
+    "Permuta / Troca", "Consórcio", "CPR", "Boleto / Parcelado", "Outro",
 )
 
 # Etapas que exigem telefone + e-mail preenchidos (nota fiscal / fechamento)

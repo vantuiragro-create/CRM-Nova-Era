@@ -57,10 +57,11 @@ let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
 let currentFilters = { q: '', canal: '', lane: '', pagamento: '' };
 
 // Formas de pagamento (batem com o servidor). Ordem = ordem no formulário.
-const PAGAMENTOS = ['À vista', 'Financiamento', 'Cartão BNDES', 'Permuta / Troca',
-  'Consórcio', 'CPR', 'Boleto / Parcelado', 'Outro'];
+const PAGAMENTOS = ['À vista', 'Financiamento', 'Cartão BNDES', 'Cartão de crédito',
+  'Permuta / Troca', 'Consórcio', 'CPR', 'Boleto / Parcelado', 'Outro'];
 // Formas que aceitam entrada + parcelamento
-const PARCELAVEIS = new Set(['Financiamento', 'Cartão BNDES', 'Consórcio', 'CPR', 'Boleto / Parcelado']);
+const PARCELAVEIS = new Set(['Financiamento', 'Cartão BNDES', 'Cartão de crédito',
+  'Consórcio', 'CPR', 'Boleto / Parcelado']);
 
 // ---------------------------------------------------------------------------
 // Helpers
