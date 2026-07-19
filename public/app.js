@@ -54,7 +54,7 @@ let members = [];
 let campaigns = [];
 let settings = {};
 let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
-let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '' };
+let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '', vendedor: '', sdr: '' };
 
 // Faixas de hectare (min/max em ha; max null = sem teto)
 const HECTARE_RANGES = {
@@ -469,6 +469,8 @@ async function loadLeads() {
   if (currentFilters.pagamento) params.set('pagamento', currentFilters.pagamento);
   if (currentFilters.produto) params.set('produto', currentFilters.produto);
   if (currentFilters.cidade) params.set('cidade', currentFilters.cidade);
+  if (currentFilters.vendedor) params.set('vendedor', currentFilters.vendedor);
+  if (currentFilters.sdr) params.set('sdr', currentFilters.sdr);
   if (currentFilters.hectare && HECTARE_RANGES[currentFilters.hectare]) {
     const r = HECTARE_RANGES[currentFilters.hectare];
     params.set('ha_min', r.min);
@@ -524,11 +526,7 @@ function buildLanes(funil, leadsFunil) {
 }
 
 function updateLaneFilter(lanes) {
-  // guarda as raias disponíveis para o chip de filtro por raia
-  laneOptionsDisp = lanes.map((l) => ({ v: l.key, t: l.nome }));
-  // se a raia filtrada não existe mais neste funil, zera
-  if (currentFilters.lane && !lanes.some((l) => l.key === currentFilters.lane)) currentFilters.lane = '';
-  refreshChipOptions('lane');
+  // (o filtro por pessoa agora é feito pelos chips Vendedor/SDR — server-side)
 }
 
 function renderBoard() {
@@ -638,6 +636,17 @@ function renderCard(lead) {
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
   if (lead.produto) { const r = el('div', 'row'); r.append(el('span', 'ic', '📦'), document.createTextNode(lead.produto)); card.append(r); }
+  // responsáveis: vendedor (destaque) e SDR
+  if (lead.vendedor) {
+    const r = el('div', 'row resp-vend');
+    r.append(el('span', 'ic', '👤'), document.createTextNode('Vendedor: ' + lead.vendedor));
+    card.append(r);
+  }
+  if (lead.sdr) {
+    const r = el('div', 'row resp-sdr');
+    r.append(el('span', 'ic', '📞'), document.createTextNode('SDR: ' + lead.sdr));
+    card.append(r);
+  }
   if (lead.cargo) { const r = el('div', 'row'); r.append(el('span', 'ic', '🧑‍💼'), document.createTextNode('Contato: ' + lead.cargo)); card.append(r); }
   if (lead.decisor) {
     const r = el('div', 'row decisor');
@@ -1609,11 +1618,20 @@ const FILTER_DEFS = {
       { v: '1000-2000', t: '1.000 – 2.000 ha' }, { v: '2000-5000', t: '2.000 – 5.000 ha' },
       { v: '5000+', t: 'Acima de 5.000 ha' }],
   },
+  vendedor: {
+    label: 'Vendedor', client: false, opts: () => [
+      ...members.filter((m) => m.ativo !== false && m.papel === 'vendedor').map((m) => ({ v: m.nome, t: m.nome })),
+      { v: '__none__', t: '(sem vendedor)' }],
+  },
+  sdr: {
+    label: 'SDR', client: false, opts: () => [
+      ...members.filter((m) => m.ativo !== false && m.papel === 'sdr').map((m) => ({ v: m.nome, t: m.nome })),
+      { v: '__none__', t: '(sem SDR)' }],
+  },
   canal: {
     label: 'Canal', client: false, opts: () =>
       ['Meta', 'Google', 'WhatsApp', 'TikTok', 'Indicação', 'Outro'].map((c) => ({ v: c, t: c })),
   },
-  lane: { label: 'Raia (responsável)', client: true, opts: () => laneOptionsDisp },
 };
 const PRODUTOS = ['T25P', 'T70P', 'T55', 'T100', 'Peças e Serviços'];
 

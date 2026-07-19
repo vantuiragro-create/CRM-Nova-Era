@@ -282,6 +282,8 @@ body {
 .card .row .ic { width: 13px; text-align: center; opacity: 0.85; flex-shrink: 0; }
 .card .row.esperando { color: var(--amber); font-weight: 700; }
 .card .row.decisor { color: var(--green-700); font-weight: 600; }
+.card .row.resp-vend { color: var(--green-600); font-weight: 700; }
+.card .row.resp-sdr { color: var(--blue); }
 .card .row.pgto { color: var(--amber); font-weight: 600; }
 
 /* Forma de pagamento no modal */

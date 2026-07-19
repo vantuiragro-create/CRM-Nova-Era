@@ -1655,6 +1655,8 @@ class Handler(BaseHTTPRequestHandler):
             pagamento = (qs.get("pagamento") or [""])[0]
             produto = (qs.get("produto") or [""])[0]
             cidade = (qs.get("cidade") or [""])[0]
+            f_vendedor = (qs.get("vendedor") or [""])[0]
+            f_sdr = (qs.get("sdr") or [""])[0]
 
             def _f(k):
                 try:
@@ -1680,6 +1682,16 @@ class Handler(BaseHTTPRequestHandler):
                 leads = [l for l in leads if l.get("produto") == produto]
             if cidade:
                 leads = [l for l in leads if str(l.get("regiao") or "").strip() == cidade]
+            if f_vendedor:
+                if f_vendedor == "__none__":
+                    leads = [l for l in leads if not str(l.get("vendedor") or "").strip()]
+                else:
+                    leads = [l for l in leads if l.get("vendedor") == f_vendedor]
+            if f_sdr:
+                if f_sdr == "__none__":
+                    leads = [l for l in leads if not str(l.get("sdr") or "").strip()]
+                else:
+                    leads = [l for l in leads if l.get("sdr") == f_sdr]
             if ha_min is not None or ha_max is not None:
                 def na_faixa(l):
                     h = parse_hectares(l.get("area_cultivada"))
