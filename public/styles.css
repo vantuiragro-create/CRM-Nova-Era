@@ -238,6 +238,20 @@ body {
 .card .row .ic { width: 13px; text-align: center; opacity: 0.85; flex-shrink: 0; }
 .card .row.esperando { color: var(--amber); font-weight: 700; }
 .card .row.decisor { color: var(--green-700); font-weight: 600; }
+.card .row.pgto { color: var(--amber); font-weight: 600; }
+
+/* Forma de pagamento no modal */
+.pay-box { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pay-row {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 10px; cursor: pointer; font-weight: 600; color: var(--ink); font-size: 13px;
+}
+.pay-row.on { border-color: var(--green-500); background: var(--green-100); }
+.pay-row .pay-nome { flex: 1; }
+.pay-row .pay-val { width: 108px; font: inherit; font-size: 12px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; }
+.pay-row .pay-val:disabled { background: #f2f4f2; color: #b6c2b8; }
+.pay-total { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 8px; }
+@media (max-width: 620px) { .pay-box { grid-template-columns: 1fr; } }
 .card .row.atendido { color: var(--green-600); font-weight: 600; }
 .lane-metrics .esperando { color: var(--amber); font-weight: 700; }
 .timeline { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 3px; }

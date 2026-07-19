@@ -50,6 +50,17 @@
     <select id="filterLane">
       <option value="">Todas as raias</option>
     </select>
+    <select id="filterPagamento">
+      <option value="">Toda forma de pagamento</option>
+      <option value="À vista">À vista</option>
+      <option value="Financiamento">Financiamento</option>
+      <option value="Cartão BNDES">Cartão BNDES</option>
+      <option value="Permuta / Troca">Permuta / Troca</option>
+      <option value="Consórcio">Consórcio</option>
+      <option value="CPR">CPR</option>
+      <option value="Boleto / Parcelado">Boleto / Parcelado</option>
+      <option value="Outro">Outro</option>
+    </select>
     <span class="hint" id="autoHint">Atualiza automaticamente a cada 15s</span>
   </div>
 
@@ -145,6 +156,10 @@
           <label>Valor estimado (R$)
             <input name="valor" type="number" min="0" step="100" placeholder="0" />
           </label>
+
+          <div class="section-title full">💰 Forma de pagamento <small class="req-hint">(pode combinar — pagamento misto)</small></div>
+          <div class="full pay-box" id="payBox"><!-- gerado via JS --></div>
+          <div class="full pay-total" id="payTotal"></div>
 
           <div class="section-title full">Responsáveis</div>
           <label>SDR (primeiro contato)

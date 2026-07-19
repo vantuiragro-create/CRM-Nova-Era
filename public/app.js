@@ -54,7 +54,11 @@ let members = [];
 let campaigns = [];
 let settings = {};
 let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
-let currentFilters = { q: '', canal: '', lane: '' };
+let currentFilters = { q: '', canal: '', lane: '', pagamento: '' };
+
+// Formas de pagamento (batem com o servidor). Ordem = ordem no formulário.
+const PAGAMENTOS = ['À vista', 'Financiamento', 'Cartão BNDES', 'Permuta / Troca',
+  'Consórcio', 'CPR', 'Boleto / Parcelado', 'Outro'];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -439,6 +443,7 @@ async function loadLeads() {
   const params = new URLSearchParams();
   if (currentFilters.q) params.set('q', currentFilters.q);
   if (currentFilters.canal) params.set('canal', currentFilters.canal);
+  if (currentFilters.pagamento) params.set('pagamento', currentFilters.pagamento);
   const data = await api('/api/leads?' + params.toString());
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
@@ -607,6 +612,12 @@ function renderCard(lead) {
     r.append(el('span', 'ic', '💳'), document.createTextNode('Decide: ' + lead.decisor + (lead.decisor_cargo ? ' (' + lead.decisor_cargo + ')' : '')));
     card.append(r);
   }
+  const fps = lead.formas_pagamento || [];
+  if (fps.length) {
+    const r = el('div', 'row pgto');
+    r.append(el('span', 'ic', '💰'), document.createTextNode(fps.map((f) => f.tipo).join(' + ')));
+    card.append(r);
+  }
 
   // entrada (data/hora) e tempo de atendimento do vendedor
   const rEnt = el('div', 'row'); rEnt.append(el('span', 'ic', '🕐'), document.createTextNode('Entrou: ' + dataHora(lead.created_at)));
@@ -723,6 +734,9 @@ function openModal(lead) {
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
 
+  renderPagamentos(lead.formas_pagamento || []);
+  modalPagInitial = JSON.stringify(lead.formas_pagamento || []);
+
   const meta = $('#metaLine');
   meta.innerHTML = '';
   if (!isNew) {
@@ -766,6 +780,65 @@ function collectFormValues() {
   return vals;
 }
 let modalInitial = {};
+let modalPagInitial = '[]';
+
+// ---- Forma de pagamento (multi + valor por forma) ----
+function renderPagamentos(lista) {
+  const box = $('#payBox');
+  box.innerHTML = '';
+  const porTipo = {};
+  for (const f of lista) porTipo[f.tipo] = f;
+  for (const tipo of PAGAMENTOS) {
+    const marcada = porTipo[tipo];
+    const row = el('label', 'pay-row' + (marcada ? ' on' : ''));
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = !!marcada;
+    const nome = el('span', 'pay-nome', tipo);
+    const val = document.createElement('input');
+    val.type = 'number'; val.min = '0'; val.step = '100';
+    val.className = 'pay-val';
+    val.placeholder = 'R$ (opcional)';
+    val.value = marcada && marcada.valor ? marcada.valor : '';
+    val.disabled = !marcada;
+    chk.addEventListener('change', () => {
+      row.classList.toggle('on', chk.checked);
+      val.disabled = !chk.checked;
+      if (!chk.checked) val.value = '';
+      updatePayTotal();
+    });
+    val.addEventListener('input', updatePayTotal);
+    row.append(chk, nome, val);
+    box.append(row);
+  }
+  updatePayTotal();
+}
+
+function collectPagamentos() {
+  const out = [];
+  for (const row of $('#payBox').querySelectorAll('.pay-row')) {
+    const chk = row.querySelector('input[type=checkbox]');
+    if (!chk.checked) continue;
+    const tipo = row.querySelector('.pay-nome').textContent;
+    const valor = parseFloat(row.querySelector('.pay-val').value) || 0;
+    out.push({ tipo, valor });
+  }
+  return out;
+}
+
+function updatePayTotal() {
+  const pg = collectPagamentos();
+  const soma = pg.reduce((a, f) => a + (f.valor || 0), 0);
+  const box = $('#payTotal');
+  if (!pg.length) { box.textContent = ''; return; }
+  const valorLead = parseFloat(form.valor.value) || 0;
+  let txt = 'Formas: ' + pg.map((f) => f.tipo).join(' + ');
+  if (soma > 0) txt += ' · soma ' + brl(soma);
+  if (soma > 0 && valorLead > 0 && Math.round(soma) !== Math.round(valorLead)) {
+    txt += ` ⚠️ difere do valor do lead (${brl(valorLead)})`;
+  }
+  box.textContent = txt;
+}
 
 async function saveLead() {
   const all = collectFormValues();
@@ -785,6 +858,9 @@ async function saveLead() {
   for (const [k, v] of Object.entries(all)) {
     if (!id || v !== (modalInitial[k] !== undefined ? modalInitial[k] : '')) data[k] = v;
   }
+  // formas de pagamento (não é campo simples do form)
+  const pg = collectPagamentos();
+  if (!id || JSON.stringify(pg) !== modalPagInitial) data.formas_pagamento = pg;
   try {
     if (id) {
       if (Object.keys(data).length === 0) { closeModal(); return; }
@@ -1036,8 +1112,8 @@ $('#btnReportCsv').addEventListener('click', baixarReportCsv);
 // ---------------------------------------------------------------------------
 // Importação em massa
 // ---------------------------------------------------------------------------
-const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;cargo;decisor;sdr;vendedor;canal;campanha;observacoes';
-const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verde - GO;500 ha;T70P;250000;Agrônomo;Proprietário (pai);;;;;cliente antigo';
+const IMPORT_HEADER = 'nome;telefone;email;regiao;area_cultivada;produto;valor;cargo;decisor;pagamento;sdr;vendedor;canal;campanha;observacoes';
+const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verde - GO;500 ha;T70P;250000;Agrônomo;Proprietário (pai);Financiamento + Permuta;;;;;cliente antigo';
 $('#importTemplate').href = 'data:text/csv;charset=utf-8,' +
   encodeURIComponent('﻿' + IMPORT_HEADER + '\n' + IMPORT_EXEMPLO + '\n');
 
@@ -1229,6 +1305,7 @@ $('#search').addEventListener('input', (e) => {
   searchTimer = setTimeout(() => { currentFilters.q = e.target.value; loadLeads(); }, 250);
 });
 $('#filterCanal').addEventListener('change', (e) => { currentFilters.canal = e.target.value; loadLeads(); });
+$('#filterPagamento').addEventListener('change', (e) => { currentFilters.pagamento = e.target.value; loadLeads(); });
 $('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); });
 
 loadCidades();

@@ -68,7 +68,7 @@ SESSAO_DIAS = 30
 
 EDITABLE = {
     "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
-    "cargo", "decisor", "decisor_cargo",
+    "cargo", "decisor", "decisor_cargo", "formas_pagamento",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
     "utm_term", "status", "observacoes", "lat", "lng",
@@ -79,6 +79,12 @@ CANAIS = ("Meta", "Google", "WhatsApp", "TikTok", "Indicação", "Outro")
 
 # Linha de produtos da empresa (lista fechada no formulario)
 PRODUTOS = ("T25P", "T70P", "T55", "T100", "Peças e Serviços")
+
+# Formas de pagamento aceitas (um lead pode combinar varias = pagamento misto)
+PAGAMENTOS = (
+    "À vista", "Financiamento", "Cartão BNDES", "Permuta / Troca",
+    "Consórcio", "CPR", "Boleto / Parcelado", "Outro",
+)
 
 # Etapas que exigem telefone + e-mail preenchidos (nota fiscal / fechamento)
 STAGES_EXIGEM_CONTATO = ("proposta", "ganho")
@@ -198,6 +204,8 @@ def load_db():
                 l.setdefault("atendido_em", None)
                 if l.get("vendedor") and not l.get("atendido_em"):
                     l["atendido_em"] = l.get("updated_at") or l.get("created_at")
+                if not isinstance(l.get("formas_pagamento"), list):
+                    l["formas_pagamento"] = []
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -240,6 +248,7 @@ def make_lead(partial=None):
         "cargo": "",          # cargo de QUEM entrou em contato
         "decisor": "",        # quem decide/paga (vazio = o proprio contato)
         "decisor_cargo": "",  # cargo do decisor, quando for outra pessoa
+        "formas_pagamento": [],  # lista de {tipo, valor} (misto = varias)
         "tipo": "",        # ""=nao classificado | "produtor" | "prestador"
         "sdr": "",         # SDR que recebeu/qualificou
         "vendedor": "",    # vendedor responsavel apos qualificar
@@ -269,6 +278,27 @@ def make_lead(partial=None):
     return lead
 
 
+def sanitiza_pagamentos(value):
+    """Aceita uma lista de {tipo, valor}; descarta itens invalidos e NaN."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        tipo = str(item.get("tipo") or "").strip()
+        if tipo not in PAGAMENTOS:
+            continue
+        try:
+            v = float(item.get("valor")) if item.get("valor") not in ("", None) else 0.0
+        except (TypeError, ValueError):
+            v = 0.0
+        if not math.isfinite(v) or v < 0:
+            v = 0.0
+        out.append({"tipo": tipo, "valor": round(v, 2)})
+    return out
+
+
 def apply_updates(lead, updates):
     """Aplica edicoes manuais. Levanta ValueError com mensagem amigavel quando
     uma regra de negocio e violada (as rotas devolvem 400 com essa mensagem)."""
@@ -286,6 +316,9 @@ def apply_updates(lead, updates):
             raise ValueError("Telefone inválido — informe DDD e número")
         if key == "produto" and value and value not in PRODUTOS:
             raise ValueError("Produto inválido — escolha um da lista")
+        if key == "formas_pagamento":
+            lead["formas_pagamento"] = sanitiza_pagamentos(value)
+            continue
         if key == "regiao" and value and _CIDADES_CANON:
             canon = canon_cidade(value)
             if not canon:
@@ -409,6 +442,7 @@ IMPORT_COLS = {
     "produto": "produto", "produtodeinteresse": "produto",
     "cargo": "cargo", "cargodocontato": "cargo", "funcao": "cargo",
     "decisor": "decisor", "quemdecide": "decisor", "quempaga": "decisor",
+    "pagamento": "pagamento", "formapagamento": "pagamento", "formadepagamento": "pagamento",
     "valor": "valor", "valorestimado": "valor", "valorestimadors": "valor",
     "sdr": "sdr", "vendedor": "vendedor", "vendedorresponsavel": "vendedor",
     "canal": "origem_canal", "origemcanal": "origem_canal", "origem": "origem_canal",
@@ -488,6 +522,14 @@ def importar_csv(texto):
             lead["area_cultivada"] = dados.get("area_cultivada", "")
             lead["cargo"] = dados.get("cargo", "")
             lead["decisor"] = dados.get("decisor", "")
+            # "Financiamento + Permuta" -> duas formas (valores ficam zerados)
+            pg = dados.get("pagamento", "")
+            if pg:
+                nomes = {p.lower(): p for p in PAGAMENTOS}
+                # separadores: + ; , (NUNCA "/", pois nomes tem "Permuta / Troca")
+                lead["formas_pagamento"] = [
+                    {"tipo": nomes[t.strip().lower()], "valor": 0.0}
+                    for t in re.split(r"[+;,]", pg) if t.strip().lower() in nomes]
             lead["sdr"] = dados.get("sdr", "")
             lead["vendedor"] = dados.get("vendedor", "")
             lead["responsavel"] = lead["vendedor"] or lead["sdr"]
@@ -1504,6 +1546,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/leads" and method == "GET":
             q = (qs.get("q") or [""])[0].lower().strip()
             canal = (qs.get("canal") or [""])[0]
+            pagamento = (qs.get("pagamento") or [""])[0]
             with _lock:
                 leads = [l for l in _db["leads"] if pode_ver_lead(user, l)]
             if q:
@@ -1514,6 +1557,9 @@ class Handler(BaseHTTPRequestHandler):
                 leads = [l for l in leads if match(l)]
             if canal:
                 leads = [l for l in leads if l.get("origem_canal") == canal]
+            if pagamento:
+                leads = [l for l in leads
+                         if any(fp.get("tipo") == pagamento for fp in (l.get("formas_pagamento") or []))]
             leads.sort(key=lambda l: l.get("updated_at") or "", reverse=True)
             return self.send_json(200, {"leads": leads, "stages": STAGES})
 
