@@ -69,6 +69,42 @@ const el = (tag, cls, txt) => {
 const brl = (n) =>
   (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
+// Data/hora curta (18/07 14:32) e completa
+function dataHora(iso, completa) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return '—';
+  const opt = completa
+    ? { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+    : { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' };
+  return d.toLocaleString('pt-BR', opt);
+}
+// Duração legível a partir de milissegundos (2h 15min, 3 dias, 40min)
+function duracao(ms) {
+  if (ms == null || ms < 0) return '—';
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'menos de 1min';
+  if (min < 60) return min + 'min';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + 'h' + (min % 60 ? ' ' + (min % 60) + 'min' : '');
+  const dias = Math.floor(h / 24);
+  return dias + (dias === 1 ? ' dia' : ' dias') + (h % 24 ? ' ' + (h % 24) + 'h' : '');
+}
+function msEntre(aIso, bIso) {
+  if (!aIso || !bIso) return null;
+  const a = new Date(aIso), b = new Date(bIso);
+  if (isNaN(a) || isNaN(b)) return null;
+  return b - a;
+}
+// Tempo que o vendedor levou para atender (da qualificação até assumir),
+// ou o tempo que o lead está esperando atendimento (se ainda sem vendedor).
+function tempoAtendimento(lead) {
+  const ref = lead.qualificado_em || lead.created_at;
+  if (lead.atendido_em) return { atendido: true, ms: msEntre(ref, lead.atendido_em) };
+  if (SALES.includes(lead.status) && !lead.vendedor) return { atendido: false, ms: Date.now() - new Date(ref) };
+  return null;
+}
+
 function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
@@ -520,6 +556,15 @@ function renderLaneLabel(lane, funil) {
       .reduce((a, l) => a + (Number(l.valor) || 0), 0);
     m1.innerHTML = `<b>${doFunil.length}</b> leads · <b>${ganhos}</b> ganhos`;
     metrics.append(m1, el('div', null, brl(emAberto) + ' em aberto'));
+    // tempo médio que este vendedor levou para atender (qualificação → assumir)
+    const tempos = doFunil.map((l) => msEntre(l.qualificado_em || l.created_at, l.atendido_em)).filter((v) => v != null && v >= 0);
+    if (tempos.length) {
+      const media = tempos.reduce((a, b) => a + b, 0) / tempos.length;
+      metrics.append(el('div', null, '⏱ atende em ~' + duracao(media)));
+    }
+    // quantos estão esperando atendimento nesta raia
+    const esperando = doFunil.filter((l) => !l.atendido_em && SALES.includes(l.status)).length;
+    if (esperando) metrics.append(el('div', 'esperando', `⏳ ${esperando} aguardando`));
   }
   box.append(metrics);
   return box;
@@ -556,6 +601,17 @@ function renderCard(lead) {
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
   if (lead.produto) { const r = el('div', 'row'); r.append(el('span', 'ic', '📦'), document.createTextNode(lead.produto)); card.append(r); }
+
+  // entrada (data/hora) e tempo de atendimento do vendedor
+  const rEnt = el('div', 'row'); rEnt.append(el('span', 'ic', '🕐'), document.createTextNode('Entrou: ' + dataHora(lead.created_at)));
+  card.append(rEnt);
+  const ta = tempoAtendimento(lead);
+  if (ta) {
+    const r = el('div', 'row ' + (ta.atendido ? 'atendido' : 'esperando'));
+    r.append(el('span', 'ic', ta.atendido ? '⏱' : '⏳'),
+      document.createTextNode(ta.atendido ? 'Atendido em ' + duracao(ta.ms) : 'Aguardando há ' + duracao(ta.ms)));
+    card.append(r);
+  }
 
   const tags = el('div', 'tags');
   if (lead.origem_canal) tags.append(el('span', `tag canal ${lead.origem_canal}`, lead.origem_canal));
@@ -668,7 +724,20 @@ function openModal(lead) {
     if (lead.utm_source) chips.push('origem: ' + lead.utm_source);
     for (const c of chips) meta.append(el('span', 'chip', c));
     if (lead.last_message) meta.append(el('div', null, 'Última mensagem: "' + String(lead.last_message).slice(0, 120) + '"'));
-    if (lead.created_at) meta.append(el('div', null, 'Entrou em ' + new Date(lead.created_at).toLocaleString('pt-BR')));
+
+    // Linha do tempo: entrada → qualificação → atendimento
+    const tl = el('div', 'timeline');
+    tl.append(el('div', null, '🕐 Entrada: ' + dataHora(lead.created_at, true)));
+    if (lead.qualificado_em) {
+      tl.append(el('div', null, `✅ Qualificado: ${dataHora(lead.qualificado_em, true)} (${duracao(msEntre(lead.created_at, lead.qualificado_em))} após entrar)`));
+    }
+    if (lead.atendido_em) {
+      const ref = lead.qualificado_em || lead.created_at;
+      tl.append(el('div', null, `⏱ Vendedor atendeu: ${dataHora(lead.atendido_em, true)} (${duracao(msEntre(ref, lead.atendido_em))} após qualificar)`));
+    } else if (SALES.includes(lead.status) && !lead.vendedor) {
+      tl.append(el('div', 'esperando', '⏳ Aguardando atendimento há ' + duracao(Date.now() - new Date(lead.qualificado_em || lead.created_at))));
+    }
+    meta.append(tl);
   }
   modalInitial = collectFormValues();
   $('#cidadesBox').hidden = true;

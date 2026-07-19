@@ -193,6 +193,10 @@ def load_db():
                 l.setdefault("qualificado_em", None)
                 if l.get("tipo") and not l.get("qualificado_em"):
                     l["qualificado_em"] = l.get("updated_at") or l.get("created_at")
+                # leads antigos que ja tem vendedor contam como atendidos
+                l.setdefault("atendido_em", None)
+                if l.get("vendedor") and not l.get("atendido_em"):
+                    l["atendido_em"] = l.get("updated_at") or l.get("created_at")
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -251,8 +255,9 @@ def make_lead(partial=None):
         "lat": None,   # localizacao exata da fazenda (ajustada no mapa);
         "lng": None,   # None = usar o centro da cidade (regiao) como aproximacao
         "last_message": "",
-        "qualificado_em": None,  # quando o SDR classificou (para o relatorio)
-        "created_at": now_iso(),
+        "qualificado_em": None,  # quando o SDR classificou (entra no funil de vendas)
+        "atendido_em": None,     # quando um vendedor assumiu (mede a agilidade)
+        "created_at": now_iso(),  # data/hora de ENTRADA do lead
         "updated_at": now_iso(),
     }
     if partial:
@@ -311,6 +316,9 @@ def apply_updates(lead, updates):
         lead["tipo"] = "produtor"
     if lead.get("tipo") and not lead.get("qualificado_em"):
         lead["qualificado_em"] = now_iso()
+    # Primeiro momento em que um vendedor assume o lead = "atendimento".
+    if lead.get("vendedor") and not lead.get("atendido_em"):
+        lead["atendido_em"] = now_iso()
 
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
@@ -475,6 +483,8 @@ def importar_csv(texto):
             lead["sdr"] = dados.get("sdr", "")
             lead["vendedor"] = dados.get("vendedor", "")
             lead["responsavel"] = lead["vendedor"] or lead["sdr"]
+            if lead["vendedor"]:
+                lead["atendido_em"] = now_iso()
             lead["origem_canal"] = dados.get("origem_canal", "")
             lead["campanha"] = dados.get("campanha", "")
             lead["observacoes"] = dados.get("observacoes", "")
@@ -1532,6 +1542,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif user["papel"] == "vendedor":
                     lead["vendedor"] = user["nome"]
                     lead["responsavel"] = user["nome"]
+                    lead["atendido_em"] = now_iso()
                     if lead.get("status") not in VENDAS_STATUSES:
                         lead["status"] = "qualificado"
                         if not lead.get("tipo"):
