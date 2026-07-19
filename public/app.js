@@ -54,7 +54,16 @@ let members = [];
 let campaigns = [];
 let settings = {};
 let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
-let currentFilters = { q: '', canal: '', lane: '', pagamento: '' };
+let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '' };
+
+// Faixas de hectare (min/max em ha; max null = sem teto)
+const HECTARE_RANGES = {
+  '0-500': { min: 0, max: 500 },
+  '500-1000': { min: 500, max: 1000 },
+  '1000-2000': { min: 1000, max: 2000 },
+  '2000-5000': { min: 2000, max: 5000 },
+  '5000+': { min: 5000, max: null },
+};
 
 // Formas de pagamento (batem com o servidor). Ordem = ordem no formulário.
 const PAGAMENTOS = ['À vista', 'Financiamento', 'Cartão BNDES', 'Cartão de crédito',
@@ -160,7 +169,25 @@ async function loadStats() {
       d.append(el('div', 'n', String(c.n)), el('div', 'l', c.l));
       box.append(d);
     }
+    preencheFiltroCidades(s.cidades || []);
   } catch (err) { console.error(err); }
+}
+
+// popula o filtro de cidade com as cidades que existem nos leads (preserva escolha)
+function preencheFiltroCidades(lista) {
+  const sel = $('#filterCidade');
+  const atual = currentFilters.cidade;
+  sel.innerHTML = '';
+  sel.append(new Option('Todas as cidades', ''));
+  for (const c of lista) sel.append(new Option(c, c));
+  if (atual && !lista.includes(atual)) sel.append(new Option(atual, atual)); // mantém filtro ativo
+  sel.value = atual || '';
+}
+
+function atualizaBotaoLimpar() {
+  const ativo = !!(currentFilters.q || currentFilters.canal || currentFilters.pagamento ||
+    currentFilters.produto || currentFilters.cidade || currentFilters.hectare || currentFilters.lane);
+  $('#btnLimparFiltros').hidden = !ativo;
 }
 
 async function loadMembers() {
@@ -447,6 +474,14 @@ async function loadLeads() {
   if (currentFilters.q) params.set('q', currentFilters.q);
   if (currentFilters.canal) params.set('canal', currentFilters.canal);
   if (currentFilters.pagamento) params.set('pagamento', currentFilters.pagamento);
+  if (currentFilters.produto) params.set('produto', currentFilters.produto);
+  if (currentFilters.cidade) params.set('cidade', currentFilters.cidade);
+  if (currentFilters.hectare && HECTARE_RANGES[currentFilters.hectare]) {
+    const r = HECTARE_RANGES[currentFilters.hectare];
+    params.set('ha_min', r.min);
+    if (r.max != null) params.set('ha_max', r.max);
+  }
+  atualizaBotaoLimpar();
   const data = await api('/api/leads?' + params.toString());
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
@@ -1567,7 +1602,16 @@ $('#search').addEventListener('input', (e) => {
 });
 $('#filterCanal').addEventListener('change', (e) => { currentFilters.canal = e.target.value; loadLeads(); });
 $('#filterPagamento').addEventListener('change', (e) => { currentFilters.pagamento = e.target.value; loadLeads(); });
-$('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); });
+$('#filterProduto').addEventListener('change', (e) => { currentFilters.produto = e.target.value; loadLeads(); });
+$('#filterCidade').addEventListener('change', (e) => { currentFilters.cidade = e.target.value; loadLeads(); });
+$('#filterHectare').addEventListener('change', (e) => { currentFilters.hectare = e.target.value; loadLeads(); });
+$('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); atualizaBotaoLimpar(); });
+$('#btnLimparFiltros').addEventListener('click', () => {
+  currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '' };
+  $('#search').value = '';
+  for (const id of ['filterCanal', 'filterPagamento', 'filterProduto', 'filterCidade', 'filterHectare', 'filterLane']) $('#' + id).value = '';
+  loadLeads();
+});
 
 loadCidades();
 loadCidadesGeo();

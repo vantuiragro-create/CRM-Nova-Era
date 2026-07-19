@@ -510,6 +510,27 @@ IMPORT_COLS = {
 }
 
 
+def parse_hectares(s):
+    """Extrai o numero de hectares de um texto livre ('3600', '500 ha',
+    '1.200 hectares', '1.200,5'). Retorna float ou None."""
+    if not s:
+        return None
+    m = re.search(r"[\d.,]+", str(s))
+    if not m:
+        return None
+    num = m.group(0).strip(".,")
+    if "." in num and "," in num:            # 1.200,5 -> 1200.5
+        num = num.replace(".", "").replace(",", ".")
+    elif "," in num:                          # 1200,5 -> 1200.5
+        num = num.replace(",", ".")
+    elif num.count(".") == 1 and len(num.split(".")[1]) == 3:
+        num = num.replace(".", "")            # 1.200 -> 1200 (separador de milhar)
+    try:
+        return float(num)
+    except ValueError:
+        return None
+
+
 def _parse_valor_br(texto):
     """Aceita '250000', '250000.50' e o formato brasileiro '250.000,50'."""
     t = str(texto or "").strip().replace("R$", "").strip()
@@ -1375,11 +1396,15 @@ class Handler(BaseHTTPRequestHandler):
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
+                # cidades presentes nos leads visiveis (para o filtro de cidade)
+                cidades = sorted({str(l.get("regiao") or "").strip()
+                                  for l in visiveis if str(l.get("regiao") or "").strip()})
                 return self.send_json(200, {
                     "total": len(visiveis),
                     "valor_pipeline": total_valor,
                     "produtores": produtores,
                     "prestadores": prestadores,
+                    "cidades": cidades,
                     "por_status": por_status,
                     "stages": STAGES,
                 })
@@ -1622,11 +1647,22 @@ class Handler(BaseHTTPRequestHandler):
                     save_db()
                     return self.send_json(200, {"ok": True})
 
-        # Listar (cada papel enxerga so o que lhe cabe)
+        # Listar (cada papel enxerga so o que lhe cabe). Todos os filtros se
+        # combinam (E logico): busca + canal + pagamento + produto + cidade + hectare.
         if path == "/api/leads" and method == "GET":
             q = (qs.get("q") or [""])[0].lower().strip()
             canal = (qs.get("canal") or [""])[0]
             pagamento = (qs.get("pagamento") or [""])[0]
+            produto = (qs.get("produto") or [""])[0]
+            cidade = (qs.get("cidade") or [""])[0]
+
+            def _f(k):
+                try:
+                    return float((qs.get(k) or [""])[0])
+                except ValueError:
+                    return None
+            ha_min, ha_max = _f("ha_min"), _f("ha_max")
+
             with _lock:
                 leads = [l for l in _db["leads"] if pode_ver_lead(user, l)]
             if q:
@@ -1640,6 +1676,21 @@ class Handler(BaseHTTPRequestHandler):
             if pagamento:
                 leads = [l for l in leads
                          if any(fp.get("tipo") == pagamento for fp in (l.get("formas_pagamento") or []))]
+            if produto:
+                leads = [l for l in leads if l.get("produto") == produto]
+            if cidade:
+                leads = [l for l in leads if str(l.get("regiao") or "").strip() == cidade]
+            if ha_min is not None or ha_max is not None:
+                def na_faixa(l):
+                    h = parse_hectares(l.get("area_cultivada"))
+                    if h is None:
+                        return False  # sem area informada nao entra numa faixa
+                    if ha_min is not None and h < ha_min:
+                        return False
+                    if ha_max is not None and h > ha_max:
+                        return False
+                    return True
+                leads = [l for l in leads if na_faixa(l)]
             leads.sort(key=lambda l: l.get("updated_at") or "", reverse=True)
             return self.send_json(200, {"leads": leads, "stages": STAGES})
 
