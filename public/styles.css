@@ -461,10 +461,16 @@ label input:focus, label select:focus, label textarea:focus {
 
 /* ---------- Celular ---------- */
 @media (max-width: 680px) {
-  .topbar { padding: 10px 12px; gap: 10px; }
+  /* No celular a PÁGINA inteira rola (o cabeçalho some ao rolar e o quadro
+     ganha a tela); no desktop segue o app-shell de altura fixa. */
+  html, body { height: auto; }
+  body { display: block; min-height: 100vh; }
+
+  .topbar { padding: 10px 12px; gap: 10px; flex-shrink: 0; }
   .brand .logo-img { width: 36px; height: 36px; }
   .brand h1 { font-size: 17px; }
   .brand .sub { font-size: 11px; }
+  .brand { flex: 1 1 auto; }
   .stats { order: 3; width: 100%; gap: 7px; }
   .stat { flex: 1 1 44%; min-width: 0; padding: 6px 10px; }
   .stat .n { font-size: 15px; }
@@ -477,9 +483,18 @@ label input:focus, label select:focus, label textarea:focus {
   .view-tab { flex: 1; padding: 8px 6px; font-size: 12px; }
   .toolbar .hint { display: none; }
 
-  :root { --col-w: 210px; --lane-w: 140px; }
-  .board-wrap { padding: 0 0 20px; }
-  .lane-label { min-height: 80px; }
+  :root { --col-w: 200px; --lane-w: 128px; }
+  /* o quadro só rola de lado; a altura acompanha o conteúdo e quem rola
+     verticalmente é a página */
+  .board-wrap { flex: none; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; padding: 0 0 24px; }
+  .lane-label { min-height: 72px; }
+  .col-h, .corner { position: static; } /* sem sticky quando a página rola */
+
+  /* mapa precisa de altura explícita quando a página rola */
+  .map-wrap { display: block; padding: 0 8px 16px; }
+  #map { height: 78vh; min-height: 340px; }
+  .map-legend { font-size: 11px; gap: 10px; }
 
   /* modais em tela cheia no celular */
   .modal-backdrop { padding: 0; align-items: stretch; }
@@ -488,6 +503,4 @@ label input:focus, label select:focus, label textarea:focus {
   .grid { grid-template-columns: 1fr; }
   .pay-box { grid-template-columns: 1fr; }
   .user-add, .camp-add, .team-add { grid-template-columns: 1fr; display: grid; }
-  .map-wrap { padding: 0 8px 12px; }
-  .map-legend { font-size: 11px; gap: 10px; }
 }
