@@ -173,21 +173,14 @@ async function loadStats() {
   } catch (err) { console.error(err); }
 }
 
-// popula o filtro de cidade com as cidades que existem nos leads (preserva escolha)
+// cidades que existem nos leads (para as opções do filtro de cidade)
 function preencheFiltroCidades(lista) {
-  const sel = $('#filterCidade');
-  const atual = currentFilters.cidade;
-  sel.innerHTML = '';
-  sel.append(new Option('Todas as cidades', ''));
-  for (const c of lista) sel.append(new Option(c, c));
-  if (atual && !lista.includes(atual)) sel.append(new Option(atual, atual)); // mantém filtro ativo
-  sel.value = atual || '';
+  cidadesDisponiveis = lista;
+  refreshChipOptions('cidade');
 }
 
 function atualizaBotaoLimpar() {
-  const ativo = !!(currentFilters.q || currentFilters.canal || currentFilters.pagamento ||
-    currentFilters.produto || currentFilters.cidade || currentFilters.hectare || currentFilters.lane);
-  $('#btnLimparFiltros').hidden = !ativo;
+  $('#btnLimparFiltros').hidden = chipsAtivos.length === 0;
 }
 
 async function loadMembers() {
@@ -531,13 +524,11 @@ function buildLanes(funil, leadsFunil) {
 }
 
 function updateLaneFilter(lanes) {
-  const sel = $('#filterLane');
-  const prev = currentFilters.lane;
-  sel.innerHTML = '';
-  sel.append(new Option('Todas as raias', ''));
-  for (const ln of lanes) sel.append(new Option(ln.nome, ln.key));
-  sel.value = lanes.some((l) => l.key === prev) ? prev : '';
-  currentFilters.lane = sel.value;
+  // guarda as raias disponíveis para o chip de filtro por raia
+  laneOptionsDisp = lanes.map((l) => ({ v: l.key, t: l.nome }));
+  // se a raia filtrada não existe mais neste funil, zera
+  if (currentFilters.lane && !lanes.some((l) => l.key === currentFilters.lane)) currentFilters.lane = '';
+  refreshChipOptions('lane');
 }
 
 function renderBoard() {
@@ -1600,18 +1591,122 @@ $('#search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { currentFilters.q = e.target.value; loadLeads(); }, 250);
 });
-$('#filterCanal').addEventListener('change', (e) => { currentFilters.canal = e.target.value; loadLeads(); });
-$('#filterPagamento').addEventListener('change', (e) => { currentFilters.pagamento = e.target.value; loadLeads(); });
-$('#filterProduto').addEventListener('change', (e) => { currentFilters.produto = e.target.value; loadLeads(); });
-$('#filterCidade').addEventListener('change', (e) => { currentFilters.cidade = e.target.value; loadLeads(); });
-$('#filterHectare').addEventListener('change', (e) => { currentFilters.hectare = e.target.value; loadLeads(); });
-$('#filterLane').addEventListener('change', (e) => { currentFilters.lane = e.target.value; renderBoard(); atualizaBotaoLimpar(); });
-$('#btnLimparFiltros').addEventListener('click', () => {
-  currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '' };
-  $('#search').value = '';
-  for (const id of ['filterCanal', 'filterPagamento', 'filterProduto', 'filterCidade', 'filterHectare', 'filterLane']) $('#' + id).value = '';
-  loadLeads();
+// ---------------------------------------------------------------------------
+// Filtros em "chips" (estilo Aegro): só a busca fica visível; o resto é
+// adicionado sob demanda pelo botão "+ Adicionar filtro".
+// ---------------------------------------------------------------------------
+let cidadesDisponiveis = [];   // preenchido pelo /api/stats
+let laneOptionsDisp = [];      // preenchido pelo renderBoard
+let chipsAtivos = [];          // ordem das chaves de filtro adicionadas
+
+const FILTER_DEFS = {
+  produto: { label: 'Drone', client: false, opts: () => PRODUTOS.map((p) => ({ v: p, t: p })) },
+  pagamento: { label: 'Forma de pagamento', client: false, opts: () => PAGAMENTOS.map((p) => ({ v: p, t: p })) },
+  cidade: { label: 'Cidade', client: false, opts: () => cidadesDisponiveis.map((c) => ({ v: c, t: c })) },
+  hectare: {
+    label: 'Faixa de hectare', client: false, opts: () => [
+      { v: '0-500', t: 'Até 500 ha' }, { v: '500-1000', t: '500 – 1.000 ha' },
+      { v: '1000-2000', t: '1.000 – 2.000 ha' }, { v: '2000-5000', t: '2.000 – 5.000 ha' },
+      { v: '5000+', t: 'Acima de 5.000 ha' }],
+  },
+  canal: {
+    label: 'Canal', client: false, opts: () =>
+      ['Meta', 'Google', 'WhatsApp', 'TikTok', 'Indicação', 'Outro'].map((c) => ({ v: c, t: c })),
+  },
+  lane: { label: 'Raia (responsável)', client: true, opts: () => laneOptionsDisp },
+};
+const PRODUTOS = ['T25P', 'T70P', 'T55', 'T100', 'Peças e Serviços'];
+
+function aplicaFiltro(key) {
+  if (FILTER_DEFS[key].client) renderBoard(); else loadLeads();
+  atualizaBotaoLimpar();
+}
+
+function renderChips() {
+  const box = $('#filterChips');
+  box.innerHTML = '';
+  for (const key of chipsAtivos) {
+    const def = FILTER_DEFS[key];
+    const chip = el('div', 'chip-filter');
+    chip.append(el('span', 'chip-label', def.label + ':'));
+    const sel = document.createElement('select');
+    sel.dataset.key = key;
+    montaOpcoes(sel, def, currentFilters[key]);
+    sel.addEventListener('change', () => { currentFilters[key] = sel.value; aplicaFiltro(key); });
+    chip.append(sel);
+    const x = el('button', 'chip-x', '✕');
+    x.type = 'button';
+    x.title = 'Remover filtro';
+    x.onclick = () => removeChip(key);
+    chip.append(x);
+    box.append(chip);
+  }
+  atualizaBotaoLimpar();
+}
+
+function montaOpcoes(sel, def, valorAtual) {
+  sel.innerHTML = '';
+  sel.append(new Option('todos', ''));
+  const opts = def.opts();
+  for (const o of opts) sel.append(new Option(o.t, o.v));
+  if (valorAtual && !opts.some((o) => o.v === valorAtual)) sel.append(new Option(valorAtual, valorAtual));
+  sel.value = valorAtual || '';
+}
+
+// atualiza as opções de um chip já aberto quando os dados chegam (cidades/raias)
+function refreshChipOptions(key) {
+  if (!chipsAtivos.includes(key)) return;
+  const sel = $(`#filterChips select[data-key="${key}"]`);
+  if (sel) montaOpcoes(sel, FILTER_DEFS[key], currentFilters[key]);
+}
+
+function addChip(key) {
+  if (chipsAtivos.includes(key)) return;
+  chipsAtivos.push(key);
+  renderChips();
+  // abre o seletor recém-criado para o usuário escolher o valor
+  const sel = $(`#filterChips select[data-key="${key}"]`);
+  if (sel) sel.focus();
+}
+
+function removeChip(key) {
+  chipsAtivos = chipsAtivos.filter((k) => k !== key);
+  const tinha = !!currentFilters[key];
+  currentFilters[key] = '';
+  renderChips();
+  if (tinha) aplicaFiltro(key);
+}
+
+function toggleFilterMenu() {
+  const menu = $('#filterMenu');
+  if (!menu.hidden) { menu.hidden = true; return; }
+  menu.innerHTML = '';
+  const disponiveis = Object.keys(FILTER_DEFS).filter((k) => !chipsAtivos.includes(k));
+  if (!disponiveis.length) {
+    menu.append(el('div', 'filter-menu-empty', 'Todos os filtros já foram adicionados'));
+  } else {
+    for (const key of disponiveis) {
+      const item = el('button', 'filter-menu-item', FILTER_DEFS[key].label);
+      item.type = 'button';
+      item.onclick = () => { menu.hidden = true; addChip(key); };
+      menu.append(item);
+    }
+  }
+  menu.hidden = false;
+}
+
+$('#btnAddFilter').addEventListener('click', (e) => { e.stopPropagation(); toggleFilterMenu(); });
+document.addEventListener('click', (e) => {
+  if (!$('#filterMenu').hidden && !e.target.closest('.filter-add-wrap')) $('#filterMenu').hidden = true;
 });
+$('#btnLimparFiltros').addEventListener('click', () => {
+  const recarrega = !!(currentFilters.produto || currentFilters.pagamento || currentFilters.cidade || currentFilters.hectare || currentFilters.canal);
+  chipsAtivos = [];
+  for (const k of Object.keys(FILTER_DEFS)) currentFilters[k] = '';
+  renderChips();
+  if (recarrega) loadLeads(); else renderBoard();
+});
+renderChips(); // estado inicial (só a busca + botão "Adicionar filtro")
 
 loadCidades();
 loadCidadesGeo();

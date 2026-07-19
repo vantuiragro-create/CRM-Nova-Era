@@ -38,50 +38,14 @@
       <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
     </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
-    <select id="filterCanal">
-      <option value="">Todos os canais</option>
-      <option value="Meta">Meta (Facebook/Instagram)</option>
-      <option value="Google">Google</option>
-      <option value="WhatsApp">WhatsApp</option>
-      <option value="TikTok">TikTok</option>
-      <option value="Indicação">Indicação</option>
-      <option value="Outro">Outro</option>
-    </select>
-    <select id="filterLane">
-      <option value="">Todas as raias</option>
-    </select>
-    <select id="filterProduto">
-      <option value="">Todos os drones</option>
-      <option value="T25P">T25P</option>
-      <option value="T70P">T70P</option>
-      <option value="T55">T55</option>
-      <option value="T100">T100</option>
-      <option value="Peças e Serviços">Peças e Serviços</option>
-    </select>
-    <select id="filterPagamento">
-      <option value="">Toda forma de pagamento</option>
-      <option value="À vista">À vista</option>
-      <option value="Financiamento">Financiamento</option>
-      <option value="Cartão BNDES">Cartão BNDES</option>
-      <option value="Cartão de crédito">Cartão de crédito</option>
-      <option value="Permuta / Troca">Permuta / Troca</option>
-      <option value="Consórcio">Consórcio</option>
-      <option value="CPR">CPR</option>
-      <option value="Boleto / Parcelado">Boleto / Parcelado</option>
-      <option value="Outro">Outro</option>
-    </select>
-    <select id="filterCidade">
-      <option value="">Todas as cidades</option>
-    </select>
-    <select id="filterHectare">
-      <option value="">Toda faixa de hectare</option>
-      <option value="0-500">Até 500 ha</option>
-      <option value="500-1000">500 – 1.000 ha</option>
-      <option value="1000-2000">1.000 – 2.000 ha</option>
-      <option value="2000-5000">2.000 – 5.000 ha</option>
-      <option value="5000+">Acima de 5.000 ha</option>
-    </select>
-    <button class="btn ghost small" id="btnLimparFiltros" hidden>✕ Limpar filtros</button>
+    <div class="filters-bar">
+      <div class="filter-chips" id="filterChips"><!-- chips de filtro via JS --></div>
+      <div class="filter-add-wrap">
+        <button class="btn-add-filter" id="btnAddFilter" type="button">+ Adicionar filtro</button>
+        <div class="filter-menu" id="filterMenu" hidden><!-- opções via JS --></div>
+      </div>
+      <button class="link-clear" id="btnLimparFiltros" type="button" hidden>Limpar tudo</button>
+    </div>
     <span class="hint" id="autoHint">Atualiza automaticamente a cada 15s</span>
   </div>
 
