@@ -278,8 +278,22 @@ def make_lead(partial=None):
     return lead
 
 
+def _num_pos(x, teto=None):
+    """Converte para float >= 0 e finito; retorna 0.0 se invalido."""
+    try:
+        v = float(x) if x not in ("", None) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(v) or v < 0:
+        return 0.0
+    if teto is not None and v > teto:
+        v = teto
+    return v
+
+
 def sanitiza_pagamentos(value):
-    """Aceita uma lista de {tipo, valor}; descarta itens invalidos e NaN."""
+    """Aceita uma lista de {tipo, valor, entrada, parcelas}; descarta lixo/NaN.
+    entrada e parcelas so fazem sentido nas formas parceladas."""
     if not isinstance(value, list):
         return []
     out = []
@@ -289,13 +303,13 @@ def sanitiza_pagamentos(value):
         tipo = str(item.get("tipo") or "").strip()
         if tipo not in PAGAMENTOS:
             continue
-        try:
-            v = float(item.get("valor")) if item.get("valor") not in ("", None) else 0.0
-        except (TypeError, ValueError):
-            v = 0.0
-        if not math.isfinite(v) or v < 0:
-            v = 0.0
-        out.append({"tipo": tipo, "valor": round(v, 2)})
+        forma = {
+            "tipo": tipo,
+            "valor": round(_num_pos(item.get("valor")), 2),
+            "entrada": round(_num_pos(item.get("entrada")), 2),
+            "parcelas": int(_num_pos(item.get("parcelas"), teto=360)),
+        }
+        out.append(forma)
     return out
 
 
@@ -528,7 +542,7 @@ def importar_csv(texto):
                 nomes = {p.lower(): p for p in PAGAMENTOS}
                 # separadores: + ; , (NUNCA "/", pois nomes tem "Permuta / Troca")
                 lead["formas_pagamento"] = [
-                    {"tipo": nomes[t.strip().lower()], "valor": 0.0}
+                    {"tipo": nomes[t.strip().lower()], "valor": 0.0, "entrada": 0.0, "parcelas": 0}
                     for t in re.split(r"[+;,]", pg) if t.strip().lower() in nomes]
             lead["sdr"] = dados.get("sdr", "")
             lead["vendedor"] = dados.get("vendedor", "")

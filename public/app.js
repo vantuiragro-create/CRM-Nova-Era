@@ -59,6 +59,8 @@ let currentFilters = { q: '', canal: '', lane: '', pagamento: '' };
 // Formas de pagamento (batem com o servidor). Ordem = ordem no formulário.
 const PAGAMENTOS = ['À vista', 'Financiamento', 'Cartão BNDES', 'Permuta / Troca',
   'Consórcio', 'CPR', 'Boleto / Parcelado', 'Outro'];
+// Formas que aceitam entrada + parcelamento
+const PARCELAVEIS = new Set(['Financiamento', 'Cartão BNDES', 'Consórcio', 'CPR', 'Boleto / Parcelado']);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -615,7 +617,7 @@ function renderCard(lead) {
   const fps = lead.formas_pagamento || [];
   if (fps.length) {
     const r = el('div', 'row pgto');
-    r.append(el('span', 'ic', '💰'), document.createTextNode(fps.map((f) => f.tipo).join(' + ')));
+    r.append(el('span', 'ic', '💰'), document.createTextNode(fps.map(formaCurta).join(' + ')));
     card.append(r);
   }
 
@@ -782,36 +784,80 @@ function collectFormValues() {
 let modalInitial = {};
 let modalPagInitial = '[]';
 
-// ---- Forma de pagamento (multi + valor por forma) ----
+// ---- Forma de pagamento (multi + valor + parcelamento) ----
 function renderPagamentos(lista) {
   const box = $('#payBox');
   box.innerHTML = '';
   const porTipo = {};
   for (const f of lista) porTipo[f.tipo] = f;
   for (const tipo of PAGAMENTOS) {
-    const marcada = porTipo[tipo];
-    const row = el('label', 'pay-row' + (marcada ? ' on' : ''));
+    const m = porTipo[tipo];
+    const parcelavel = PARCELAVEIS.has(tipo);
+    const row = el('div', 'pay-row' + (m ? ' on' : ''));
+
+    const head = el('label', 'pay-head');
     const chk = document.createElement('input');
     chk.type = 'checkbox';
-    chk.checked = !!marcada;
+    chk.checked = !!m;
     const nome = el('span', 'pay-nome', tipo);
     const val = document.createElement('input');
     val.type = 'number'; val.min = '0'; val.step = '100';
     val.className = 'pay-val';
-    val.placeholder = 'R$ (opcional)';
-    val.value = marcada && marcada.valor ? marcada.valor : '';
-    val.disabled = !marcada;
+    val.placeholder = 'R$ total';
+    val.value = m && m.valor ? m.valor : '';
+    val.disabled = !m;
+    head.append(chk, nome, val);
+    row.append(head);
+
+    // linha de parcelamento (só para formas parceláveis)
+    let ent = null, par = null, hint = null;
+    if (parcelavel) {
+      const pl = el('div', 'pay-parc');
+      ent = document.createElement('input');
+      ent.type = 'number'; ent.min = '0'; ent.step = '100';
+      ent.className = 'pay-ent'; ent.placeholder = 'entrada R$';
+      ent.value = m && m.entrada ? m.entrada : '';
+      ent.disabled = !m;
+      par = document.createElement('input');
+      par.type = 'number'; par.min = '0'; par.max = '360'; par.step = '1';
+      par.className = 'pay-parcelas'; par.placeholder = 'nº parcelas';
+      par.value = m && m.parcelas ? m.parcelas : '';
+      par.disabled = !m;
+      pl.append(el('span', 'pay-plus', 'entrada +'), ent, par, el('span', 'pay-x', 'x'));
+      row.append(pl);
+      hint = el('div', 'pay-hint');
+      row.append(hint);
+      const upd = () => { atualizaParcelaHint(val, ent, par, hint); updatePayTotal(); };
+      ent.addEventListener('input', upd);
+      par.addEventListener('input', upd);
+    }
+
     chk.addEventListener('change', () => {
       row.classList.toggle('on', chk.checked);
-      val.disabled = !chk.checked;
-      if (!chk.checked) val.value = '';
+      for (const inp of [val, ent, par]) if (inp) { inp.disabled = !chk.checked; if (!chk.checked) inp.value = ''; }
+      if (hint) atualizaParcelaHint(val, ent, par, hint);
       updatePayTotal();
     });
-    val.addEventListener('input', updatePayTotal);
-    row.append(chk, nome, val);
+    val.addEventListener('input', () => { if (hint) atualizaParcelaHint(val, ent, par, hint); updatePayTotal(); });
     box.append(row);
+    if (hint) atualizaParcelaHint(val, ent, par, hint);
   }
   updatePayTotal();
+}
+
+// Mostra "10x de R$4.500" abaixo da forma parcelada
+function atualizaParcelaHint(val, ent, par, hint) {
+  const total = parseFloat(val.value) || 0;
+  const entrada = parseFloat(ent.value) || 0;
+  const n = parseInt(par.value, 10) || 0;
+  if (n > 0) {
+    const base = Math.max(total - entrada, 0);
+    const parc = base > 0 ? base / n : 0;
+    hint.textContent = (entrada > 0 ? 'Entrada ' + brl(entrada) + ' + ' : '') +
+      n + 'x' + (parc > 0 ? ' de ' + brl(parc) : '');
+  } else {
+    hint.textContent = '';
+  }
 }
 
 function collectPagamentos() {
@@ -819,9 +865,12 @@ function collectPagamentos() {
   for (const row of $('#payBox').querySelectorAll('.pay-row')) {
     const chk = row.querySelector('input[type=checkbox]');
     if (!chk.checked) continue;
-    const tipo = row.querySelector('.pay-nome').textContent;
-    const valor = parseFloat(row.querySelector('.pay-val').value) || 0;
-    out.push({ tipo, valor });
+    out.push({
+      tipo: row.querySelector('.pay-nome').textContent,
+      valor: parseFloat(row.querySelector('.pay-val').value) || 0,
+      entrada: parseFloat(row.querySelector('.pay-ent')?.value) || 0,
+      parcelas: parseInt(row.querySelector('.pay-parcelas')?.value, 10) || 0,
+    });
   }
   return out;
 }
@@ -832,12 +881,17 @@ function updatePayTotal() {
   const box = $('#payTotal');
   if (!pg.length) { box.textContent = ''; return; }
   const valorLead = parseFloat(form.valor.value) || 0;
-  let txt = 'Formas: ' + pg.map((f) => f.tipo).join(' + ');
+  let txt = 'Formas: ' + pg.map((f) => f.tipo + (f.parcelas ? ` (${f.entrada ? 'entrada + ' : ''}${f.parcelas}x)` : '')).join(' + ');
   if (soma > 0) txt += ' · soma ' + brl(soma);
   if (soma > 0 && valorLead > 0 && Math.round(soma) !== Math.round(valorLead)) {
     txt += ` ⚠️ difere do valor do lead (${brl(valorLead)})`;
   }
   box.textContent = txt;
+}
+
+// Texto curto de uma forma para o card (ex.: "Boleto / Parcelado 10x")
+function formaCurta(f) {
+  return f.tipo + (f.parcelas ? ' ' + (f.entrada ? 'entr.+' : '') + f.parcelas + 'x' : '');
 }
 
 async function saveLead() {
