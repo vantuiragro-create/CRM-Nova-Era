@@ -11,7 +11,7 @@ const STAGE_LABELS = {
   financiamento: 'Aguardando financiamento (Vendas)',
   ganho: 'Fechado (ganho)',
   desistiu: 'Desistiu da compra',
-  perdido: 'Perdido',
+  perdido: 'Perdido p/ concorrente',
 };
 let STAGES = ['novo', 'triagem', 'qualificado', 'decidindo', 'negociacao', 'proposta',
   'financiamento', 'ganho', 'desistiu', 'perdido'];
@@ -32,7 +32,7 @@ const COL = {
   financiamento: { key: 'financiamento', label: '⏳ Aguardando financiamento', patch: { status: 'financiamento' }, match: (l) => l.status === 'financiamento' },
   ganho: { key: 'ganho', label: '🏆 Ganho', patch: { status: 'ganho' }, match: (l) => l.status === 'ganho' },
   desistiu: { key: 'desistiu', label: '🚫 Desistiu', patch: { status: 'desistiu' }, match: (l) => l.status === 'desistiu' },
-  perdido: { key: 'perdido', label: '🚩 Perdido', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
+  perdido: { key: 'perdido', label: '🚩 Perdido p/ concorrente', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
 };
 
 // Três funis, cada um numa aba. Produtores e Prestadores são iguais em etapas,
@@ -210,7 +210,7 @@ function leadsDaVisao() {
 function leadsNaVisao() { return leadsDaVisao().length; }
 const VIEW_LABEL = {
   sdr: 'Funil SDR', produtor: 'Produtores', prestador: 'Prestadores',
-  perdidos: 'Perdidos', desistiu: 'Desistiu', map: 'Mapa',
+  perdidos: 'Perdido p/ concorrente', desistiu: 'Desistiu', map: 'Mapa',
 };
 // resultados terminais que a ação em massa nunca deve alterar
 const STATUS_ENCERRADOS = ['ganho', 'perdido', 'desistiu'];
@@ -609,9 +609,9 @@ function renderResgate(cfg) {
 function renderLost() {
   renderResgate({
     status: 'perdido', head: '#lostHead', grid: '#lostGrid', emoji: '🚩',
-    singular: 'negócio perdido', plural: 'negócios perdidos',
-    vazio: 'Nenhum negócio perdido. 🎉',
-    vazioFiltro: 'Nenhum negócio perdido corresponde à busca/filtros atuais.',
+    singular: 'cliente perdido p/ concorrente', plural: 'clientes perdidos p/ concorrente',
+    vazio: 'Nenhum cliente perdido para concorrente. 🎉',
+    vazioFiltro: 'Nenhum perdido p/ concorrente corresponde à busca/filtros atuais.',
   });
 }
 
@@ -1612,7 +1612,7 @@ async function renderReport() {
     table.innerHTML = '<thead><tr><th>Dia</th>' +
       '<th class="num">Recebidos</th><th class="num">Chatwoot</th>' +
       '<th class="num">Qualificados</th><th class="num">🌾 Prod.</th><th class="num">🔧 Prest.</th>' +
-      '<th class="num">Ganhos</th><th class="num">Perdidos</th><th class="num">Desistiu</th></tr></thead>';
+      '<th class="num">Ganhos</th><th class="num">Concorrente</th><th class="num">Desistiu</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const r of reportCache) {
       const tr = document.createElement('tr');

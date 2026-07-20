@@ -386,7 +386,7 @@ STATUS_LABEL = {
     "novo": "Novo lead", "triagem": "Em triagem", "qualificado": "Qualificado",
     "decidindo": "Decidindo", "negociacao": "Em negociação", "proposta": "Proposta enviada",
     "financiamento": "Aguardando financiamento",
-    "ganho": "Fechado (ganho)", "desistiu": "Desistiu da compra", "perdido": "Perdido",
+    "ganho": "Fechado (ganho)", "desistiu": "Desistiu da compra", "perdido": "Perdido p/ concorrente",
 }
 HIST_LABEL = {
     "status": "Etapa", "vendedor": "Vendedor", "sdr": "SDR", "tipo": "Classificação",
