@@ -216,6 +216,15 @@ def load_db():
                 l.setdefault("atendido_em", None)
                 if l.get("vendedor") and not l.get("atendido_em"):
                     l["atendido_em"] = l.get("updated_at") or l.get("created_at")
+                # congela a data de ganho/perda dos leads antigos na data atual
+                # (updated_at) para que edicoes/notas futuras nao movam a vitoria
+                # ou perda de dia no relatorio.
+                l.setdefault("ganho_em", None)
+                if l.get("status") == "ganho" and not l.get("ganho_em"):
+                    l["ganho_em"] = l.get("updated_at") or l.get("created_at")
+                l.setdefault("perdido_em", None)
+                if l.get("status") == "perdido" and not l.get("perdido_em"):
+                    l["perdido_em"] = l.get("updated_at") or l.get("created_at")
                 if not isinstance(l.get("formas_pagamento"), list):
                     l["formas_pagamento"] = []
                 if not isinstance(l.get("visitas"), list):
@@ -288,6 +297,8 @@ def make_lead(partial=None):
         "last_message": "",
         "qualificado_em": None,  # quando o SDR classificou (entra no funil de vendas)
         "atendido_em": None,     # quando um vendedor assumiu (mede a agilidade)
+        "ganho_em": None,        # data em que o negocio foi GANHO (fixa; p/ relatorio)
+        "perdido_em": None,      # data em que o negocio foi PERDIDO (fixa; p/ relatorio)
         "created_at": now_iso(),  # data/hora de ENTRADA do lead
         "updated_at": now_iso(),
     }
@@ -378,14 +389,20 @@ HIST_LABEL = {
 }
 
 
-def registra_hist(lead, autor, itens):
-    """Anexa uma entrada na linha do tempo do lead (mantem as ultimas 300)."""
+def registra_hist(lead, autor, itens, papel=None, tipo=None):
+    """Anexa uma entrada na linha do tempo do lead (mantem as ultimas 300).
+
+    papel = cargo de quem fez (admin/gerente/vendedor/sdr) para aparecer no
+    painel; tipo = 'nota' quando for uma atualizacao escrita a mao."""
     itens = [i for i in itens if i]
     if not itens:
         return
-    lead.setdefault("historico", []).append({
-        "data": now_iso(), "autor": autor or "Sistema", "itens": itens,
-    })
+    entrada = {"data": now_iso(), "autor": autor or "Sistema", "itens": itens}
+    if papel:
+        entrada["papel"] = papel
+    if tipo:
+        entrada["tipo"] = tipo
+    lead.setdefault("historico", []).append(entrada)
     if len(lead["historico"]) > 300:
         lead["historico"] = lead["historico"][-300:]
 
@@ -429,6 +446,7 @@ def descreve_mudancas(antes, depois, campos):
 def apply_updates(lead, updates):
     """Aplica edicoes manuais. Levanta ValueError com mensagem amigavel quando
     uma regra de negocio e violada (as rotas devolvem 400 com essa mensagem)."""
+    status_antes = lead.get("status")
     for key, value in updates.items():
         if key not in EDITABLE:
             continue
@@ -483,6 +501,12 @@ def apply_updates(lead, updates):
     # Primeiro momento em que um vendedor assume o lead = "atendimento".
     if lead.get("vendedor") and not lead.get("atendido_em"):
         lead["atendido_em"] = now_iso()
+    # Carimba a data de ganho/perda no momento da TRANSICAO (nao em cada save),
+    # para o relatorio nao depender de updated_at (que muda com nota/visita/edicao).
+    if lead.get("status") == "ganho" and status_antes != "ganho":
+        lead["ganho_em"] = now_iso()
+    if lead.get("status") == "perdido" and status_antes != "perdido":
+        lead["perdido_em"] = now_iso()
 
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
@@ -697,6 +721,10 @@ def importar_csv(texto):
                 lead["tipo"] = "produtor"
             if lead.get("tipo"):
                 lead["qualificado_em"] = now_iso()
+            if lead["status"] == "ganho":
+                lead["ganho_em"] = now_iso()
+            elif lead["status"] == "perdido":
+                lead["perdido_em"] = now_iso()
             _db["leads"].append(lead)
             criados += 1
         if criados:
@@ -1647,11 +1675,11 @@ class Handler(BaseHTTPRequestHandler):
                         elif l.get("tipo") == "prestador":
                             b["prestadores"] += 1
                     if l.get("status") == "ganho":
-                        dg = dia_brt(l.get("updated_at"))
+                        dg = dia_brt(l.get("ganho_em") or l.get("updated_at"))
                         if dg:
                             bucket(dg)["ganhos"] += 1
                     elif l.get("status") == "perdido":
-                        dp = dia_brt(l.get("updated_at"))
+                        dp = dia_brt(l.get("perdido_em") or l.get("updated_at"))
                         if dp:
                             bucket(dp)["perdidos"] += 1
 
@@ -1854,7 +1882,7 @@ class Handler(BaseHTTPRequestHandler):
                     sem_local = lead.get("lat") is None or lead.get("lng") is None
                     if sem_local or (acc is not None and acc <= 150):
                         lead["lat"], lead["lng"] = la, lo
-                    registra_hist(lead, user["nome"], ["🚗 Visita registrada" + (": " + resultado if resultado else "")])
+                    registra_hist(lead, user["nome"], ["🚗 Visita registrada" + (": " + resultado if resultado else "")], papel=user["papel"])
                     lead["updated_at"] = now_iso()
                     save_db()
                     return self.send_json(201, {"visita": visita, "total": len(lead["visitas"])})
@@ -1877,6 +1905,26 @@ class Handler(BaseHTTPRequestHandler):
                     lead["visitas"] = [x for x in lead["visitas"] if x["id"] != visita_id]
                     save_db()
                     return self.send_json(200, {"ok": True, "total": len(lead["visitas"])})
+
+        # ---- Nota manual na linha do tempo (vendedor/gerente escrevem updates) ----
+        mn = re.match(r"^/api/leads/([^/]+)/notas$", path)
+        if mn and method == "POST":
+            lead_id = mn.group(1)
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            texto = str(body.get("texto") or "").strip()[:2000]
+            if not texto:
+                return self.send_json(400, {"error": "Escreva a atualização antes de salvar"})
+            with _lock:
+                lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                if not lead or not pode_ver_lead(user, lead):
+                    return self.send_json(404, {"error": "Lead nao encontrado"})
+                registra_hist(lead, user["nome"], ["💬 " + texto], papel=user["papel"], tipo="nota")
+                lead["updated_at"] = now_iso()
+                save_db()
+                return self.send_json(201, {"entrada": lead["historico"][-1]})
 
         # Criar
         if path == "/api/leads" and method == "POST":
@@ -1909,7 +1957,7 @@ class Handler(BaseHTTPRequestHandler):
                 if dup:
                     return self.send_json(400, {"error": "Já existe um lead com esse %s: %s" % (
                         campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
-                registra_hist(lead, user["nome"], ["🆕 Lead criado (cadastro manual)"])
+                registra_hist(lead, user["nome"], ["🆕 Lead criado (cadastro manual)"], papel=user["papel"])
                 _db["leads"].append(lead)
                 save_db()
                 return self.send_json(201, {"lead": lead})
@@ -1955,7 +2003,7 @@ class Handler(BaseHTTPRequestHandler):
                     # registra no historico o que mudou (antes de sobrescrever)
                     itens = descreve_mudancas(lead, tentativa, list(body.keys()))
                     lead.update(tentativa)
-                    registra_hist(lead, user["nome"], itens)
+                    registra_hist(lead, user["nome"], itens, papel=user["papel"])
                     save_db()
                     return self.send_json(200, {"lead": lead})
                 if method == "DELETE":

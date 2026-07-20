@@ -67,6 +67,7 @@
     <div class="map-legend">
       <span><span class="pin-dot aprox"></span> Aproximado (centro da cidade)</span>
       <span><span class="pin-dot exato"></span> Fazenda exata (ajustada)</span>
+      <span>👍 Contato recente · 🔥 Lead quente (várias atualizações)</span>
       <span class="map-hint">Arraste um pino até a fazenda do cliente para salvar a localização exata.</span>
     </div>
     <div id="map"></div>
@@ -215,6 +216,11 @@
     </div>
     <aside class="hist-panel" id="histPanel">
       <div class="hist-head">📜 Histórico do lead</div>
+      <div class="hist-compose">
+        <textarea id="histNota" rows="2" maxlength="2000"
+          placeholder="Escreva uma atualização sobre este cliente… (ex.: liguei, vai pensar até sexta)"></textarea>
+        <button class="hist-nota-btn" id="histNotaBtn" type="button">Adicionar</button>
+      </div>
       <div class="hist-timeline" id="histTimeline"></div>
     </aside>
     </div>

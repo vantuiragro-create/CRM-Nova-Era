@@ -370,6 +370,36 @@ async function salvarLocalizacao(lead, lat, lng) {
 
 let ajustandoId = null; // id do lead em modo "ajustar local" (clicar no mapa)
 
+// ---- Atividade recente / "lead quente" -----------------------------------
+// Conta quantas atualizações o lead teve nos últimos HEAT_DIAS dias (qualquer
+// entrada do histórico: nota escrita, visita, mudança de etapa, retorno do
+// cliente…). Pouca atividade recente = 👍 contato recente; muita = 🔥 quente.
+const HEAT_DIAS = 7;      // janela do "recente"
+const HEAT_QUENTE = 3;    // nº de atualizações recentes p/ virar 🔥
+function atividadeRecente(lead) {
+  const hist = (lead && lead.historico) || [];
+  if (!hist.length) return 0;
+  const limite = Date.now() - HEAT_DIAS * 86400000;
+  let n = 0;
+  for (const h of hist) {
+    const t = new Date(h.data).getTime();
+    if (!isNaN(t) && t >= limite) n++;
+  }
+  return n;
+}
+function heatLevel(lead) {
+  const n = atividadeRecente(lead);
+  if (n >= HEAT_QUENTE) return 'quente';
+  if (n >= 1) return 'recente';
+  return '';
+}
+function heatEmoji(lead) {
+  const lv = heatLevel(lead);
+  return lv === 'quente' ? '🔥' : lv === 'recente' ? '👍' : '';
+}
+const PAPEL_LABEL = { admin: 'Administrador', gerente: 'Gerente', vendedor: 'Vendedor', sdr: 'SDR' };
+const papelLabel = (p) => PAPEL_LABEL[p] || p || '';
+
 function pinClass(lead, exato) {
   if (lead.status === 'ganho') return 'won';
   if (lead.status === 'perdido') return 'lost';
@@ -379,6 +409,11 @@ function pinFlag(lead) {
   if (lead.status === 'ganho') return '<span class="pin-flag">🟢</span>';
   if (lead.status === 'perdido') return '<span class="pin-flag">🔴</span>';
   return '';
+}
+function pinHeat(lead) {
+  const lv = heatLevel(lead);
+  if (!lv) return '';
+  return `<span class="pin-heat ${lv}">${lv === 'quente' ? '🔥' : '👍'}</span>`;
 }
 
 function renderMap() {
@@ -391,7 +426,7 @@ function renderMap() {
     const ajustando = ajustandoId === lead.id;
     const icon = L.divIcon({
       className: '',
-      html: `<div class="lead-pin ${pinClass(lead, loc.exato)}${ajustando ? ' movendo' : ''}"></div>${pinFlag(lead)}`,
+      html: `<div class="lead-pin ${pinClass(lead, loc.exato)} heat-${heatLevel(lead) || 'none'}${ajustando ? ' movendo' : ''}"></div>${pinFlag(lead)}${pinHeat(lead)}`,
       iconSize: [18, 18],
       iconAnchor: [9, 9],
     });
@@ -409,6 +444,12 @@ function renderMap() {
     if (lead.valor > 0) pop.append(el('div', 'pp-linha', '💰 ' + brl(lead.valor)));
     const resp = lead.vendedor || lead.sdr;
     if (resp) pop.append(el('div', 'pp-linha', '👤 ' + resp));
+    const hlv = heatLevel(lead);
+    if (hlv) {
+      const nAt = atividadeRecente(lead);
+      pop.append(el('div', 'pp-linha pp-heat', (hlv === 'quente' ? '🔥 Lead quente' : '👍 Contato recente')
+        + ` · ${nAt} ${nAt > 1 ? 'atualizações' : 'atualização'} em ${HEAT_DIAS} dias`));
+    }
 
     const acoes = el('div', 'pp-acoes');
     const bEdit = el('button', 'pp-btn', '✏️ Editar lead');
@@ -659,6 +700,12 @@ function renderCard(lead) {
   if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢'));
   else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴'));
   nome.append(document.createTextNode(lead.nome || '(sem nome)'));
+  const hz = heatEmoji(lead);
+  if (hz) {
+    const b = el('span', 'card-heat ' + heatLevel(lead), hz);
+    b.title = heatLevel(lead) === 'quente' ? 'Lead quente — várias atualizações recentes' : 'Atualização recente';
+    nome.append(b);
+  }
   card.append(nome);
   if (lead.telefone) { const r = el('div', 'row'); r.append(el('span', 'ic', '📱'), document.createTextNode(lead.telefone)); card.append(r); }
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
@@ -818,6 +865,7 @@ function openModal(lead) {
   modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
   renderVisitas(isNew ? null : lead);
   $('#btnRegistrarVisita').disabled = isNew;
+  $('#histNota').value = ''; // rascunho de nota é por-lead: limpa ao abrir outro
   renderHistorico(isNew ? null : lead);
 
   const meta = $('#metaLine');
@@ -1088,11 +1136,46 @@ function renderHistorico(lead) {
     return;
   }
   for (const h of hist) {
-    const e = el('div', 'hist-entry');
+    const e = el('div', 'hist-entry' + (h.tipo === 'nota' ? ' nota' : ''));
     e.append(el('div', 'hist-when', dataHora(h.data, true)));
-    e.append(el('div', 'hist-who', '👤 ' + (h.autor || 'Sistema')));
+    const autor = h.autor || 'Sistema';
+    const cargo = h.papel ? papelLabel(h.papel) : '';
+    const quem = '👤 ' + autor + (cargo && cargo !== autor ? ' · ' + cargo : '');
+    e.append(el('div', 'hist-who', quem));
     for (const it of (h.itens || [])) e.append(el('div', 'hist-item', it));
     tl.append(e);
+  }
+}
+
+let salvandoNota = false; // trava de reentrância (clique + atalho de teclado)
+async function adicionarNota() {
+  const ta = $('#histNota');
+  const texto = (ta.value || '').trim();
+  const id = form.id.value;
+  if (!id || salvandoNota) return; // lead não salvo, ou já tem um envio em voo
+  if (!texto) { toast('Escreva a atualização antes de adicionar'); ta.focus(); return; }
+  salvandoNota = true;
+  const btn = $('#histNotaBtn');
+  // desabilita botão E textarea: bloqueia duplo-envio e evita perder rascunho novo
+  btn.disabled = true; ta.disabled = true; btn.textContent = 'Salvando…';
+  try {
+    const res = await api('/api/leads/' + encodeURIComponent(id) + '/notas', {
+      method: 'POST', body: JSON.stringify({ texto }),
+    });
+    ta.value = ''; // texto enviado com sucesso: limpa o campo
+    const lead = leadsCache.find((l) => l.id === id);
+    if (lead) {
+      lead.historico = lead.historico || [];
+      lead.historico.push(res.entrada);
+      lead.updated_at = res.entrada.data;
+      renderHistorico(lead);
+    }
+    toast('✅ Atualização adicionada');
+  } catch (err) {
+    toast('Erro ao adicionar: ' + err.message);
+  } finally {
+    salvandoNota = false;
+    btn.disabled = false; ta.disabled = false; btn.textContent = 'Adicionar';
   }
 }
 
@@ -1206,7 +1289,7 @@ async function salvarVisita() {
       lead.visitas.push(res.visita);
       // reflete a visita no histórico do painel (o servidor já gravou)
       lead.historico = lead.historico || [];
-      lead.historico.push({ data: res.visita.data, autor: res.visita.visitante, itens: ['🚗 Visita registrada' + (res.visita.resultado ? ': ' + res.visita.resultado : '')] });
+      lead.historico.push({ data: res.visita.data, autor: res.visita.visitante, papel: me && me.papel, itens: ['🚗 Visita registrada' + (res.visita.resultado ? ': ' + res.visita.resultado : '')] });
       renderVisitas(lead);
       renderHistorico(lead);
       renderBoard();
@@ -1235,6 +1318,12 @@ $('#btnRegistrarVisita').addEventListener('click', openVisitModal);
 $('#visitClose').addEventListener('click', () => { $('#visitBackdrop').hidden = true; });
 $('#visitCancel').addEventListener('click', () => { $('#visitBackdrop').hidden = true; });
 $('#visitSalvar').addEventListener('click', salvarVisita);
+
+// Nota manual no painel de histórico
+$('#histNotaBtn').addEventListener('click', adicionarNota);
+$('#histNota').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); adicionarNota(); }
+});
 
 // ---------------------------------------------------------------------------
 // Campanhas
