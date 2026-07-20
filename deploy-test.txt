@@ -1,0 +1,4 @@
+Coolify auto-deploy test
+Created at: 2026-07-20T13:58:07Z
+Repository expected by Coolify: vantuirf/CRM-Nova-Era
+Branch expected by Coolify: main
