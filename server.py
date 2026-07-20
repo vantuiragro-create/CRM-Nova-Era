@@ -56,10 +56,12 @@ RESULTADOS_VISITA = (
 #   qualificado..ganho    -> funil de vendas (o "tipo" diz se e produtor ou
 #                            prestador; cada tipo tem sua aba)
 #   perdido               -> venda/lead que nao avancou (guardado p/ resgate)
-STAGES = ["novo", "triagem", "qualificado", "negociacao", "proposta", "ganho", "perdido"]
+STAGES = ["novo", "triagem", "qualificado", "negociacao", "proposta",
+          "financiamento", "ganho", "perdido"]
 
-# Etapas do funil de vendas (ja qualificado)
-SALES_STAGES = ("qualificado", "negociacao", "proposta", "ganho")
+# Etapas do funil de vendas (ja qualificado). "financiamento" = proposta aceita,
+# cliente aguardando a liberacao do recurso no banco.
+SALES_STAGES = ("qualificado", "negociacao", "proposta", "financiamento", "ganho")
 
 # Papeis da equipe (raias dos funis)
 PAPEIS = ("sdr", "vendedor")
@@ -99,7 +101,7 @@ PARCELAVEIS = frozenset({
 })
 
 # Etapas que exigem telefone + e-mail preenchidos (nota fiscal / fechamento)
-STAGES_EXIGEM_CONTATO = ("proposta", "ganho")
+STAGES_EXIGEM_CONTATO = ("proposta", "financiamento", "ganho")
 
 # Municipios oficiais (IBGE), carregados de public/cidades.json no boot.
 # _CIDADES_CANON mapeia minusculo -> forma canonica "Nome - UF".
@@ -377,6 +379,7 @@ def sanitiza_pagamentos(value):
 STATUS_LABEL = {
     "novo": "Novo lead", "triagem": "Em triagem", "qualificado": "Qualificado",
     "negociacao": "Em negociação", "proposta": "Proposta enviada",
+    "financiamento": "Aguardando financiamento",
     "ganho": "Fechado (ganho)", "perdido": "Perdido",
 }
 HIST_LABEL = {
@@ -511,7 +514,9 @@ def apply_updates(lead, updates):
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
             not str(lead.get("telefone") or "").strip() or not str(lead.get("email") or "").strip()):
-        raise ValueError('Para mover para "Proposta"/"Ganho", preencha telefone e e-mail do lead (nota fiscal)')
+        # lista gerada das proprias etapas: nao desatualiza ao criar uma nova
+        etapas = "/".join('"%s"' % STATUS_LABEL.get(s, s) for s in STAGES_EXIGEM_CONTATO)
+        raise ValueError("Para mover para %s, preencha telefone e e-mail do lead (nota fiscal)" % etapas)
 
     # Ao definir um vendedor, a posse do lead passa para ele (a menos que o
     # responsavel tenha sido informado explicitamente na mesma atualizacao).

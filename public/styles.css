@@ -193,6 +193,8 @@ body {
 .lead-pin.exato { background: var(--green-600); }
 .lead-pin.won { background: var(--green-600); }
 .lead-pin.lost { background: var(--danger); }
+/* aguardando o banco: anel azul (perde p/ "movendo" e p/ o calor, logo abaixo) */
+.lead-pin.aguardando { box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 3px rgba(43,108,176,0.45); }
 .lead-pin.movendo { box-shadow: 0 0 0 4px rgba(112, 212, 75, 0.6); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(112, 212, 75, 0.25); } }
 .pin-flag { position: absolute; left: 10px; top: -12px; font-size: 13px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
@@ -203,6 +205,12 @@ body {
 .lead-pin.heat-quente { box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 3px rgba(255,120,0,0.5); animation: heatPulse 1.5s infinite; }
 @keyframes heatPulse { 50% { box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 8px rgba(255,120,0,0.15); } }
 .map-popup .pp-heat { font-weight: 700; }
+/* aguardando o banco liberar o recurso: ampulheta girando ("carregando") */
+.pin-fin { position: absolute; left: -13px; top: -11px; font-size: 14px; line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.45)); pointer-events: none;
+  animation: finGira 2s linear infinite; }
+@keyframes finGira { 0% { transform: rotate(0deg); } 60% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+.map-popup .pp-fin { font-weight: 700; color: #2b6cb0; }
 /* selo de atividade no card do quadro */
 .card-heat { margin-left: 5px; font-size: 13px; }
 .card-heat.quente { animation: heatBlink 1.6s infinite; }
@@ -279,8 +287,23 @@ body {
 .st-perd_sdr .dot { background: var(--danger); }
 .st-recebido .dot { background: var(--green-500); }
 .st-negociacao .dot { background: var(--purple); }
+/* aviso: filtro/busca escondeu todos os leads (nada foi perdido) */
+.empty-filtro {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 10px 16px; padding: 12px 16px; border-radius: 12px;
+  background: #fff8e6; border: 1px solid #f0d9a0; color: #6b4e00;
+  font-size: 13.5px; font-weight: 600;
+}
+.empty-filtro[hidden] { display: none; }
+.btn-limpa-vazio {
+  border: none; cursor: pointer; background: var(--green-600); color: #fff;
+  font-weight: 700; font-size: 13px; padding: 7px 14px; border-radius: 9px;
+}
+.btn-limpa-vazio:hover { background: var(--green-700); }
 .st-proposta .dot { background: var(--amber); }
+.st-financiamento .dot { background: #2b6cb0; }
 .st-ganho .dot { background: var(--green-600); }
+.col-h.st-financiamento { background: #eef5ff; }
 .st-perdido .dot { background: var(--danger); }
 .col-h.st-q_prod, .col-h.st-q_prest { background: var(--green-100); }
 .col-h.st-ganho { background: #eafaf0; }

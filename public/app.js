@@ -7,10 +7,12 @@ const STAGE_LABELS = {
   qualificado: 'Qualificado / Recebido (Vendas)',
   negociacao: 'Em negociação (Vendas)',
   proposta: 'Proposta enviada (Vendas)',
+  financiamento: 'Aguardando financiamento (Vendas)',
   ganho: 'Fechado (ganho)',
   perdido: 'Perdido',
 };
-let STAGES = ['novo', 'triagem', 'qualificado', 'negociacao', 'proposta', 'ganho', 'perdido'];
+let STAGES = ['novo', 'triagem', 'qualificado', 'negociacao', 'proposta',
+  'financiamento', 'ganho', 'perdido'];
 
 // Cada coluna carrega o "patch" que o arraste aplica e um "match" que decide
 // quais leads ficam nela. Colunas de qualificação (q_prod/q_prest) não guardam
@@ -24,6 +26,7 @@ const COL = {
   recebido: { key: 'recebido', label: '📥 Recebido do SDR', patch: { status: 'qualificado' }, match: (l) => l.status === 'qualificado' },
   negociacao: { key: 'negociacao', label: 'Em negociação', patch: { status: 'negociacao' }, match: (l) => l.status === 'negociacao' },
   proposta: { key: 'proposta', label: 'Proposta enviada', patch: { status: 'proposta' }, match: (l) => l.status === 'proposta' },
+  financiamento: { key: 'financiamento', label: '⏳ Aguardando financiamento', patch: { status: 'financiamento' }, match: (l) => l.status === 'financiamento' },
   ganho: { key: 'ganho', label: '🏆 Ganho', patch: { status: 'ganho' }, match: (l) => l.status === 'ganho' },
   perdido: { key: 'perdido', label: '🚩 Perdido', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
 };
@@ -38,18 +41,19 @@ const FUNIS = {
   },
   produtor: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
-    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.ganho, COL.perdido],
+    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
     inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'perdido'),
   },
   prestador: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'prestador',
-    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.ganho, COL.perdido],
+    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
     inclui: (l) => l.tipo === 'prestador' && (SALES.includes(l.status) || l.status === 'perdido'),
   },
 };
-const SALES = ['qualificado', 'negociacao', 'proposta', 'ganho'];
+const SALES = ['qualificado', 'negociacao', 'proposta', 'financiamento', 'ganho'];
 
 let leadsCache = [];
+let primeiroLoadFeito = false; // só avisa "nada encontrado" depois do 1º carregamento
 let members = [];
 let campaigns = [];
 let settings = {};
@@ -179,8 +183,47 @@ function preencheFiltroCidades(lista) {
   refreshChipOptions('cidade');
 }
 
+// Filtro ativo = qualquer chip COM valor ou a busca preenchida. A busca conta:
+// sem isso o botão "Limpar tudo" ficava escondido e o usuário não tinha como
+// desfazer uma busca que estava escondendo todos os leads (só o F5 resolvia).
+function filtroAtivo() {
+  return !!currentFilters.q || Object.keys(FILTER_DEFS).some((k) => currentFilters[k]);
+}
+
 function atualizaBotaoLimpar() {
-  $('#btnLimparFiltros').hidden = chipsAtivos.length === 0;
+  $('#btnLimparFiltros').hidden = chipsAtivos.length === 0 && !currentFilters.q;
+}
+
+// Quantos leads a ABA ATUAL mostraria. O quadro exibe só a fatia do funil, então
+// contar o cache inteiro daria "tudo certo" com a tela vazia.
+function leadsNaVisao() {
+  if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido').length;
+  if (currentView === 'map') return leadsCache.length;
+  const funil = FUNIS[currentView] || FUNIS.sdr;
+  return leadsCache.filter(funil.inclui).length;
+}
+
+// Se a busca/filtro escondeu os leads DESTA aba, avisa em vez de deixar um quadro
+// mudo (que parecia "sumiu tudo / bugou") e oferece o botão para limpar.
+function atualizaEstadoVazio() {
+  const box = $('#emptyFiltro');
+  if (!box) return;
+  if (!primeiroLoadFeito) { box.hidden = true; return; } // evita piscar no boot
+  const vazio = leadsNaVisao() === 0 && filtroAtivo();
+  const mudou = box.hidden === vazio;
+  box.hidden = !vazio;
+  if (vazio) {
+    const noutrasAbas = leadsCache.length;
+    const alvo = currentFilters.q
+      ? `à busca "${currentFilters.q}" e aos filtros atuais`
+      : 'aos filtros atuais';
+    $('#emptyFiltroTexto').textContent = noutrasAbas > 0
+      ? `Nenhum lead desta aba corresponde ${alvo} — há ${noutrasAbas} em outras abas. Seus leads continuam salvos.`
+      : `Nenhum lead corresponde ${alvo} — seus leads continuam salvos.`;
+  }
+  // o aviso entra/sai do fluxo e muda a altura do mapa; o Leaflet só se remede
+  // sozinho quando a janela muda de tamanho
+  if (mudou && currentView === 'map' && map) setTimeout(() => map.invalidateSize(), 60);
 }
 
 async function loadMembers() {
@@ -416,6 +459,11 @@ function pinHeat(lead) {
   if (!lv) return '';
   return `<span class="pin-heat ${lv}">${lv === 'quente' ? '🔥' : '👍'}</span>`;
 }
+// Cliente com a proposta aceita, esperando o banco liberar o recurso: ampulheta
+// girando em volta do pino ("carregando" = dinheiro a caminho).
+function pinFin(lead) {
+  return lead.status === 'financiamento' ? '<span class="pin-fin">⏳</span>' : '';
+}
 
 function renderMap() {
   if (!map) return;
@@ -427,7 +475,7 @@ function renderMap() {
     const ajustando = ajustandoId === lead.id;
     const icon = L.divIcon({
       className: '',
-      html: `<div class="lead-pin ${pinClass(lead, loc.exato)} heat-${heatLevel(lead) || 'none'}${ajustando ? ' movendo' : ''}"></div>${pinFlag(lead)}${pinHeat(lead)}`,
+      html: `<div class="lead-pin ${pinClass(lead, loc.exato)} heat-${heatLevel(lead) || 'none'}${lead.status === 'financiamento' ? ' aguardando' : ''}${ajustando ? ' movendo' : ''}"></div>${pinFlag(lead)}${pinHeat(lead)}${pinFin(lead)}`,
       iconSize: [18, 18],
       iconAnchor: [9, 9],
     });
@@ -445,6 +493,9 @@ function renderMap() {
     if (lead.valor > 0) pop.append(el('div', 'pp-linha', '💰 ' + brl(lead.valor)));
     const resp = lead.vendedor || lead.sdr;
     if (resp) pop.append(el('div', 'pp-linha', '👤 ' + resp));
+    if (lead.status === 'financiamento') {
+      pop.append(el('div', 'pp-linha pp-fin', '⏳ Aguardando liberação do financiamento'));
+    }
     const hlv = heatLevel(lead);
     if (hlv) {
       const nAt = atividadeRecente(lead);
@@ -521,7 +572,9 @@ function renderLost() {
   const grid = $('#lostGrid');
   grid.innerHTML = '';
   if (!perdidos.length) {
-    grid.append(el('div', 'lost-empty', 'Nenhum negócio perdido. 🎉'));
+    grid.append(el('div', 'lost-empty', filtroAtivo()
+      ? 'Nenhum negócio perdido corresponde à busca/filtros atuais.'
+      : 'Nenhum negócio perdido. 🎉'));
     return;
   }
   perdidos.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
@@ -550,8 +603,10 @@ async function loadLeads() {
   const data = await api('/api/leads?' + params.toString());
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
+  primeiroLoadFeito = true;
   if (currentView === 'perdidos') renderLost();
   else { renderBoard(); if (currentView === 'map') renderMap(); }
+  atualizaEstadoVazio();
 }
 
 async function refreshAll() {
@@ -631,6 +686,7 @@ function renderBoard() {
   if (members.length === 0 && me && me.papel === 'admin') {
     toastOnce('Crie os usuários da equipe em 👥 Usuários para ativar o rodízio de leads.');
   }
+  atualizaEstadoVazio();
 }
 
 function renderLaneLabel(lane, funil) {
@@ -789,17 +845,23 @@ async function dropLead(id, lane, col, funil) {
 
   try {
     await api('/api/leads/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(patch) });
-    loadStats();
-    if (col.envia) {
-      toast(`✅ Qualificado! Enviado para a aba ${col.envia}`);
-    } else {
-      const dest = lane.isNone ? 'Sem responsável' : lane.nome;
-      toast(`→ ${col.label} · ${dest}`);
-    }
   } catch (err) {
+    // só o PATCH desfaz o movimento; uma falha depois dele NÃO pode reverter
+    // uma mudança que o servidor já gravou
     Object.assign(lead, before);
     renderBoard();
     toast('Erro ao mover: ' + err.message);
+    return;
+  }
+  loadStats();
+  // Com filtro/busca ativos o lead movido pode não casar mais com o filtro.
+  // Recarrega já: antes ele sumia sozinho 15s depois, sem explicação.
+  if (filtroAtivo()) loadLeads();
+  if (col.envia) {
+    toast(`✅ Qualificado! Enviado para a aba ${col.envia}`);
+  } else {
+    const dest = lane.isNone ? 'Sem responsável' : lane.nome;
+    toast(`→ ${col.label} · ${dest}`);
   }
 }
 
@@ -1866,16 +1928,20 @@ $('#btnAddFilter').addEventListener('click', (e) => { e.stopPropagation(); toggl
 document.addEventListener('click', (e) => {
   if (!$('#filterMenu').hidden && !e.target.closest('.filter-add-wrap')) $('#filterMenu').hidden = true;
 });
-$('#btnLimparFiltros').addEventListener('click', () => {
-  // qualquer filtro server-side ativo exige recarregar a lista
-  const recarrega = Object.keys(FILTER_DEFS).some((k) => currentFilters[k]);
+function limparFiltros() {
+  // qualquer filtro server-side ativo exige recarregar a lista (a busca também)
+  const recarrega = filtroAtivo();
   chipsAtivos = [];
   for (const k of Object.keys(FILTER_DEFS)) currentFilters[k] = '';
+  currentFilters.q = '';
+  $('#search').value = '';   // o campo e o estado não podem divergir
   renderChips();
   if (recarrega) loadLeads();           // loadLeads já re-renderiza a aba atual (inclui Perdidos)
   else if (currentView === 'perdidos') renderLost();
   else renderBoard();
-});
+}
+$('#btnLimparFiltros').addEventListener('click', limparFiltros);
+$('#btnLimparVazio').addEventListener('click', limparFiltros);
 renderChips(); // estado inicial (só a busca + botão "Adicionar filtro")
 
 loadCidades();
@@ -1924,6 +1990,11 @@ function applyRoleUI() {
   } catch (_) {
     return; // api() já redirecionou para o login
   }
+  // O navegador restaura o texto do campo de busca ao recarregar (F5). Sem
+  // sincronizar, o campo mostrava um termo enquanto o filtro estava vazio — e
+  // bastava digitar mais uma letra para "sumir tudo" de novo.
+  currentFilters.q = $('#search').value || '';
+  atualizaBotaoLimpar();
   applyRoleUI();
   refreshAll();
 })();

@@ -54,6 +54,12 @@
     ⚠️ Você ainda está usando a senha padrão. Clique aqui para trocar em <b>Usuários</b> e proteger o acesso.
   </div>
 
+  <!-- aviso quando um filtro/busca esconde todos os leads (nada foi perdido) -->
+  <div class="empty-filtro" id="emptyFiltro" hidden>
+    <span id="emptyFiltroTexto">Nenhum lead corresponde à busca/filtros atuais.</span>
+    <button class="btn-limpa-vazio" id="btnLimparVazio" type="button">Limpar busca e filtros</button>
+  </div>
+
   <main class="board-wrap" id="boardWrap">
     <div class="swimboard" id="swimboard"><!-- swimlanes via JS --></div>
   </main>
@@ -68,6 +74,7 @@
       <span><span class="pin-dot aprox"></span> Aproximado (centro da cidade)</span>
       <span><span class="pin-dot exato"></span> Fazenda exata (ajustada)</span>
       <span>👍 Contato recente · 🔥 Lead quente (várias atualizações)</span>
+      <span>⏳ Aguardando liberação do financiamento</span>
       <span class="map-hint">Arraste um pino até a fazenda do cliente para salvar a localização exata.</span>
     </div>
     <div id="map"></div>
