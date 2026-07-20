@@ -56,12 +56,14 @@ RESULTADOS_VISITA = (
 #   qualificado..ganho    -> funil de vendas (o "tipo" diz se e produtor ou
 #                            prestador; cada tipo tem sua aba)
 #   perdido               -> venda/lead que nao avancou (guardado p/ resgate)
-STAGES = ["novo", "triagem", "qualificado", "negociacao", "proposta",
+STAGES = ["novo", "triagem", "qualificado", "decidindo", "negociacao", "proposta",
           "financiamento", "ganho", "perdido"]
 
-# Etapas do funil de vendas (ja qualificado). "financiamento" = proposta aceita,
+# Etapas do funil de vendas (ja qualificado). "decidindo" = cliente avaliando se
+# vai adquirir o drone (antes de negociar); "financiamento" = proposta aceita,
 # cliente aguardando a liberacao do recurso no banco.
-SALES_STAGES = ("qualificado", "negociacao", "proposta", "financiamento", "ganho")
+SALES_STAGES = ("qualificado", "decidindo", "negociacao", "proposta",
+                "financiamento", "ganho")
 
 # Papeis da equipe (raias dos funis)
 PAPEIS = ("sdr", "vendedor")
@@ -378,7 +380,7 @@ def sanitiza_pagamentos(value):
 # ---------------------------------------------------------------------------
 STATUS_LABEL = {
     "novo": "Novo lead", "triagem": "Em triagem", "qualificado": "Qualificado",
-    "negociacao": "Em negociação", "proposta": "Proposta enviada",
+    "decidindo": "Decidindo", "negociacao": "Em negociação", "proposta": "Proposta enviada",
     "financiamento": "Aguardando financiamento",
     "ganho": "Fechado (ganho)", "perdido": "Perdido",
 }
@@ -1817,6 +1819,71 @@ class Handler(BaseHTTPRequestHandler):
                 leads = [l for l in leads if na_faixa(l)]
             leads.sort(key=lambda l: l.get("updated_at") or "", reverse=True)
             return self.send_json(200, {"leads": leads, "stages": STAGES})
+
+        # ---- Acao em massa: atribuir vendedor / classificar varios leads ----
+        # (ANTES da rota por id, senao 'bulk' casaria no regex)
+        if path == "/api/leads/bulk" and method == "POST":
+            if not gestor:
+                return self.send_json(403, {"error": "Só gerente/administrador pode alterar vários leads de uma vez"})
+            try:
+                body = self.read_body()
+            except Exception:
+                return self.send_json(400, {"error": "Corpo invalido"})
+            ids = body.get("ids")
+            if not isinstance(ids, list) or not ids:
+                return self.send_json(400, {"error": "Nenhum lead selecionado"})
+            if len(ids) > 2000:
+                return self.send_json(400, {"error": "Seleção grande demais (máximo 2000)"})
+            updates = {}
+            vend = str(body.get("vendedor") or "").strip()
+            if vend:
+                updates["vendedor"] = vend
+            if body.get("tipo") in ("produtor", "prestador"):
+                updates["tipo"] = body["tipo"]
+            if body.get("qualificar"):
+                updates["status"] = "qualificado"
+            if not updates:
+                return self.send_json(400, {"error": "Escolha o que alterar (vendedor e/ou classificação)"})
+            alvo = set(str(i) for i in ids)
+            ok, sem_mudanca, fechados, falhas = 0, 0, 0, []
+            with _lock:
+                for lead in _db["leads"]:
+                    if lead["id"] not in alvo or not pode_ver_lead(user, lead):
+                        continue
+                    # Negocio ja fechado (ganho/perdido) NAO e tocado: reatribuir
+                    # o dono de uma venda antiga bagunca historico e comissao.
+                    if lead.get("status") in ("ganho", "perdido"):
+                        fechados += 1
+                        continue
+                    u = dict(updates)
+                    # "qualificar" so vale para quem ainda esta na triagem: nunca
+                    # puxa de volta quem ja avancou (negociacao/proposta/...)
+                    if lead.get("status") not in ("novo", "triagem"):
+                        u.pop("status", None)
+                    if not u:
+                        sem_mudanca += 1
+                        continue
+                    tentativa = dict(lead)
+                    try:
+                        apply_updates(tentativa, u)
+                    except ValueError as e:
+                        falhas.append({"nome": lead.get("nome") or lead["id"], "motivo": str(e)})
+                        continue
+                    itens = descreve_mudancas(lead, tentativa, list(u.keys()))
+                    if not itens:
+                        # nada mudou de verdade: nao carimba updated_at nem gera
+                        # entrada no historico (senao "queima" o selo de atividade)
+                        sem_mudanca += 1
+                        continue
+                    lead.update(tentativa)
+                    registra_hist(lead, user["nome"], itens, papel=user["papel"], tipo="massa")
+                    ok += 1
+                if ok:
+                    save_db()
+            print("[massa] %d atualizados, %d sem mudanca, %d fechados ignorados (por %s)"
+                  % (ok, sem_mudanca, fechados, user["nome"]))
+            return self.send_json(200, {"atualizados": ok, "sem_alteracao": sem_mudanca,
+                                        "fechados_ignorados": fechados, "falhas": falhas})
 
         # Importacao em massa (ANTES da rota por id: 'import' casaria no regex)
         if path == "/api/leads/import" and method == "POST":

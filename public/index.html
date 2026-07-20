@@ -20,6 +20,7 @@
     <div class="stats" id="stats"><!-- preenchido via JS --></div>
     <div class="actions">
       <span class="user-chip" id="userChip"></span>
+      <button class="btn ghost" id="btnBulk" title="Alterar vários clientes de uma vez" hidden>⚡ Em massa</button>
       <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar</button>
       <button class="btn ghost" id="btnReport" title="Relatório diário" hidden>📊 Relatório</button>
       <button class="btn ghost" id="btnCampaigns" title="Campanhas" hidden>📣 Campanhas</button>
@@ -299,6 +300,40 @@
   </div>
 
   <!-- Modal de Importação em massa -->
+  <!-- Ação em massa: aplica a mesma mudança a todos os clientes listados agora -->
+  <div class="modal-backdrop" id="bulkBackdrop" hidden>
+    <div class="modal narrow" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>⚡ Alterar vários de uma vez</h2>
+        <button class="icon-btn" id="bulkClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted-note" id="bulkResumo"></p>
+        <label>Vendedor responsável
+          <select id="bulkVendedor"></select>
+        </label>
+        <label>Classificar como
+          <select id="bulkTipo">
+            <option value="">— manter como está —</option>
+            <option value="produtor">🌾 Produtor rural</option>
+            <option value="prestador">🔧 Prestador de serviço</option>
+          </select>
+        </label>
+        <label class="bulk-check">
+          <input type="checkbox" id="bulkQualificar" />
+          Mover para o funil de vendas (etapa “Recebido do SDR”) quem ainda está na triagem
+        </label>
+        <p class="muted-note">Altera <b>só os clientes da aba em que você está agora</b> (respeitando a
+          busca e os filtros) — o número acima é exatamente o que será alterado. Negócios já
+          <b>Ganhos</b> ou <b>Perdidos</b> <b>não são alterados</b>.</p>
+        <div class="import-actions">
+          <button class="btn primary" id="btnBulkRun" type="button">Aplicar</button>
+        </div>
+        <div id="bulkResult" class="import-result"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="importBackdrop" hidden>
     <div class="modal narrow" role="dialog" aria-modal="true">
       <div class="modal-head">

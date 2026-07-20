@@ -286,7 +286,14 @@ body {
 .st-q_prest .dot { background: #2f855a; }
 .st-perd_sdr .dot { background: var(--danger); }
 .st-recebido .dot { background: var(--green-500); }
+.st-decidindo .dot { background: #b8860b; }
 .st-negociacao .dot { background: var(--purple); }
+/* caixa de seleção da ação em massa */
+.bulk-check {
+  display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
+  font-weight: 500; color: var(--ink); margin-top: 10px;
+}
+.bulk-check input { margin-top: 2px; flex-shrink: 0; }
 /* aviso: filtro/busca escondeu todos os leads (nada foi perdido) */
 .empty-filtro {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

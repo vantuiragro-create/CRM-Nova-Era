@@ -5,13 +5,14 @@ const STAGE_LABELS = {
   novo: 'Novo lead (SDR)',
   triagem: 'Em triagem (SDR)',
   qualificado: 'Qualificado / Recebido (Vendas)',
+  decidindo: 'Decidindo se vai comprar (Vendas)',
   negociacao: 'Em negociação (Vendas)',
   proposta: 'Proposta enviada (Vendas)',
   financiamento: 'Aguardando financiamento (Vendas)',
   ganho: 'Fechado (ganho)',
   perdido: 'Perdido',
 };
-let STAGES = ['novo', 'triagem', 'qualificado', 'negociacao', 'proposta',
+let STAGES = ['novo', 'triagem', 'qualificado', 'decidindo', 'negociacao', 'proposta',
   'financiamento', 'ganho', 'perdido'];
 
 // Cada coluna carrega o "patch" que o arraste aplica e um "match" que decide
@@ -24,6 +25,7 @@ const COL = {
   q_prest: { key: 'q_prest', label: '🔧 → Prestadores', patch: { status: 'qualificado', tipo: 'prestador' }, match: () => false, envia: 'Prestadores' },
   perd_sdr: { key: 'perd_sdr', label: 'Perdido na triagem', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' && !l.tipo },
   recebido: { key: 'recebido', label: '📥 Recebido do SDR', patch: { status: 'qualificado' }, match: (l) => l.status === 'qualificado' },
+  decidindo: { key: 'decidindo', label: '🤔 Decidindo', patch: { status: 'decidindo' }, match: (l) => l.status === 'decidindo' },
   negociacao: { key: 'negociacao', label: 'Em negociação', patch: { status: 'negociacao' }, match: (l) => l.status === 'negociacao' },
   proposta: { key: 'proposta', label: 'Proposta enviada', patch: { status: 'proposta' }, match: (l) => l.status === 'proposta' },
   financiamento: { key: 'financiamento', label: '⏳ Aguardando financiamento', patch: { status: 'financiamento' }, match: (l) => l.status === 'financiamento' },
@@ -41,16 +43,16 @@ const FUNIS = {
   },
   produtor: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
-    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
+    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
     inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'perdido'),
   },
   prestador: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'prestador',
-    colunas: [COL.recebido, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
+    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
     inclui: (l) => l.tipo === 'prestador' && (SALES.includes(l.status) || l.status === 'perdido'),
   },
 };
-const SALES = ['qualificado', 'negociacao', 'proposta', 'financiamento', 'ganho'];
+const SALES = ['qualificado', 'decidindo', 'negociacao', 'proposta', 'financiamento', 'ganho'];
 
 let leadsCache = [];
 let primeiroLoadFeito = false; // só avisa "nada encontrado" depois do 1º carregamento
@@ -196,12 +198,17 @@ function atualizaBotaoLimpar() {
 
 // Quantos leads a ABA ATUAL mostraria. O quadro exibe só a fatia do funil, então
 // contar o cache inteiro daria "tudo certo" com a tela vazia.
-function leadsNaVisao() {
-  if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido').length;
-  if (currentView === 'map') return leadsCache.length;
+function leadsDaVisao() {
+  if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido');
+  if (currentView === 'map') return leadsCache.slice();
   const funil = FUNIS[currentView] || FUNIS.sdr;
-  return leadsCache.filter(funil.inclui).length;
+  return leadsCache.filter(funil.inclui);
 }
+function leadsNaVisao() { return leadsDaVisao().length; }
+const VIEW_LABEL = {
+  sdr: 'Funil SDR', produtor: 'Produtores', prestador: 'Prestadores',
+  perdidos: 'Perdidos', map: 'Mapa',
+};
 
 // Se a busca/filtro escondeu os leads DESTA aba, avisa em vez de deixar um quadro
 // mudo (que parecia "sumiu tudo / bugou") e oferece o botão para limpar.
@@ -1620,6 +1627,73 @@ const IMPORT_EXEMPLO = 'João da Silva;+55 62 99999-0000;joao@email.com;Rio Verd
 $('#importTemplate').href = 'data:text/csv;charset=utf-8,' +
   encodeURIComponent('﻿' + IMPORT_HEADER + '\n' + IMPORT_EXEMPLO + '\n');
 
+// ---------------------------------------------------------------------------
+// Ação em massa (gestor): aplica a mesma mudança a TODOS os clientes listados
+// agora (respeita busca e filtros, para o usuário ver antes o que vai mudar).
+// ---------------------------------------------------------------------------
+function abrirBulk() {
+  if (currentView === 'map') {
+    toast('Abra uma aba de funil (Produtores, Prestadores…) para usar a ação em massa');
+    return;
+  }
+  const vendNames = members.filter((m) => m.ativo !== false && m.papel === 'vendedor').map((m) => m.nome);
+  fillSelect($('#bulkVendedor'), vendNames, '', '— manter como está —');
+  $('#bulkTipo').value = '';
+  $('#bulkQualificar').checked = false;
+  $('#bulkResult').innerHTML = '';
+  const n = leadsDaVisao().length;   // exatamente o que está na tela desta aba
+  const aba = VIEW_LABEL[currentView] || currentView;
+  $('#bulkResumo').textContent = n
+    ? `${n} cliente${n > 1 ? 's' : ''} da aba “${aba}” ${n > 1 ? 'serão alterados' : 'será alterado'}.`
+    : `Nenhum cliente na aba “${aba}” — troque de aba ou ajuste a busca/filtros.`;
+  $('#btnBulkRun').disabled = !n;
+  $('#bulkBackdrop').hidden = false;
+}
+
+async function rodarBulk() {
+  const alvos = leadsDaVisao();
+  const ids = alvos.map((l) => l.id);
+  const vendedor = $('#bulkVendedor').value;
+  const tipo = $('#bulkTipo').value;
+  const qualificar = $('#bulkQualificar').checked;
+  if (!ids.length) return;
+  if (!vendedor && !tipo && !qualificar) { toast('Escolha o vendedor e/ou a classificação'); return; }
+  const oque = [vendedor && `vendedor: ${vendedor}`, tipo && `classificação: ${tipo}`,
+    qualificar && 'mover para o funil de vendas'].filter(Boolean).join(' · ');
+  const aba = VIEW_LABEL[currentView] || currentView;
+  if (!confirm(`Aplicar a ${ids.length} cliente(s) da aba "${aba}"?\n\n${oque}\n\n`
+    + 'Negócios já Ganhos ou Perdidos não serão alterados.')) return;
+  const btn = $('#btnBulkRun');
+  btn.disabled = true; btn.textContent = 'Aplicando…';
+  try {
+    const res = await api('/api/leads/bulk', {
+      method: 'POST', body: JSON.stringify({ ids, vendedor, tipo, qualificar }),
+    });
+    const box = $('#bulkResult');
+    box.innerHTML = '';
+    box.append(el('div', null, `✅ ${res.atualizados} cliente(s) atualizado(s).`));
+    if (res.sem_alteracao) box.append(el('div', null, `• ${res.sem_alteracao} já estava(m) assim (nada mudou).`));
+    if (res.fechados_ignorados) box.append(el('div', null, `• ${res.fechados_ignorados} negócio(s) Ganho/Perdido não foram tocados.`));
+    for (const f of (res.falhas || []).slice(0, 20)) {
+      box.append(el('div', 'import-erro', `⚠️ ${f.nome}: ${f.motivo}`));
+    }
+    if ((res.falhas || []).length > 20) box.append(el('div', 'import-erro', `… e mais ${res.falhas.length - 20}.`));
+    await refreshAll();
+    toast(`✅ ${res.atualizados} cliente(s) atualizado(s)`);
+  } catch (err) {
+    toast('Erro: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Aplicar';
+  }
+}
+
+$('#btnBulk').addEventListener('click', abrirBulk);
+$('#bulkClose').addEventListener('click', () => { $('#bulkBackdrop').hidden = true; });
+$('#bulkBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#bulkBackdrop')) $('#bulkBackdrop').hidden = true;
+});
+$('#btnBulkRun').addEventListener('click', rodarBulk);
+
 $('#btnImport').addEventListener('click', () => {
   $('#importResult').innerHTML = '';
   $('#importFile').value = '';
@@ -1789,6 +1863,7 @@ document.addEventListener('keydown', (e) => {
   if (!$('#teamBackdrop').hidden) { $('#teamBackdrop').hidden = true; refreshAll(); }
   if (!$('#campBackdrop').hidden) { $('#campBackdrop').hidden = true; refreshAll(); }
   if (!$('#importBackdrop').hidden) $('#importBackdrop').hidden = true;
+  if (!$('#bulkBackdrop').hidden) $('#bulkBackdrop').hidden = true;
   if (!$('#reportBackdrop').hidden) $('#reportBackdrop').hidden = true;
   if (!$('#visitBackdrop').hidden) $('#visitBackdrop').hidden = true;
 });
@@ -1957,6 +2032,9 @@ function toastOnce(msg) { if (_toastedOnce) return; _toastedOnce = true; toast(m
 setInterval(async () => {
   if (!me) return; // ainda sem login
   if (!$('#modalBackdrop').hidden) return;
+  // com a janela de ação em massa aberta, a lista não pode mudar embaixo do
+  // usuário: o que ele confirmou tem que ser o que será alterado
+  if (!$('#bulkBackdrop').hidden) return;
   await refreshAll();
   if (!$('#campBackdrop').hidden) renderCampReport();
 }, 15000);
@@ -1967,6 +2045,7 @@ setInterval(async () => {
 function applyRoleUI() {
   const gestor = me.papel === 'admin' || me.papel === 'gerente';
   $('#userChip').textContent = `👤 ${me.nome} · ${PAPEL_LABEL[me.papel] || me.papel}`;
+  $('#btnBulk').hidden = !gestor;
   $('#btnImport').hidden = !gestor;
   $('#btnReport').hidden = !gestor;
   $('#btnCampaigns').hidden = !gestor;
