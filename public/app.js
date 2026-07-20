@@ -397,7 +397,8 @@ function heatEmoji(lead) {
   const lv = heatLevel(lead);
   return lv === 'quente' ? '🔥' : lv === 'recente' ? '👍' : '';
 }
-const PAPEL_LABEL = { admin: 'Administrador', gerente: 'Gerente', vendedor: 'Vendedor', sdr: 'SDR' };
+// papelLabel usa o PAPEL_LABEL definido mais abaixo (seção de Usuários);
+// é chamado só em tempo de execução (renderHistorico), então não há TDZ.
 const papelLabel = (p) => PAPEL_LABEL[p] || p || '';
 
 function pinClass(lead, exato) {
