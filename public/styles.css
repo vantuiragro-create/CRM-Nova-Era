@@ -340,6 +340,22 @@ body {
 }
 .modal.narrow { width: 460px; }
 .modal.wide { width: 760px; }
+
+/* Modal do lead + painel de histórico ao lado */
+.modal-row { display: flex; gap: 12px; align-items: stretch; max-width: 100%; max-height: 92vh; }
+.hist-panel {
+  width: 300px; flex-shrink: 0; background: #fff; border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden;
+}
+.hist-head { padding: 15px 18px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; color: var(--green-700); }
+.hist-timeline { padding: 12px 14px; overflow-y: auto; flex: 1; }
+.hist-entry { position: relative; padding: 0 0 14px 16px; border-left: 2px solid var(--line); }
+.hist-entry:last-child { border-left-color: transparent; padding-bottom: 0; }
+.hist-entry::before { content: ''; position: absolute; left: -6px; top: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--green-500); border: 2px solid #fff; }
+.hist-when { font-size: 11.5px; font-weight: 700; color: var(--ink); }
+.hist-who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.hist-item { font-size: 12.5px; color: var(--ink); margin-top: 2px; }
+.hist-empty { font-size: 12.5px; color: var(--muted); padding: 6px 2px; }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 20px; border-bottom: 1px solid var(--line);
@@ -556,6 +572,10 @@ label input:focus, label select:focus, label textarea:focus {
   /* modais em tela cheia no celular */
   .modal-backdrop { padding: 0; align-items: stretch; }
   .modal, .modal.narrow, .modal.wide { width: 100%; max-width: 100%; max-height: 100vh; border-radius: 0; }
+  /* histórico empilha no topo, com altura própria */
+  .modal-row { flex-direction: column; gap: 0; width: 100%; height: 100vh; max-height: 100vh; }
+  .hist-panel { width: 100%; order: -1; max-height: 34vh; border-radius: 0; flex-shrink: 0; }
+  .modal-row .modal { flex: 1; min-height: 0; max-height: none; }
   .modal-body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
   .pay-box { grid-template-columns: 1fr; }

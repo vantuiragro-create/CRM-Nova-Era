@@ -76,6 +76,7 @@
 
   <!-- Modal de detalhe / edição do lead -->
   <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal-row">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
         <h2 id="modalTitle">Lead</h2>
@@ -211,6 +212,11 @@
         <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
         <button class="btn primary" id="btnSave" type="button">Salvar</button>
       </div>
+    </div>
+    <aside class="hist-panel" id="histPanel">
+      <div class="hist-head">📜 Histórico do lead</div>
+      <div class="hist-timeline" id="histTimeline"></div>
+    </aside>
     </div>
   </div>
 

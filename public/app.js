@@ -818,6 +818,7 @@ function openModal(lead) {
   modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
   renderVisitas(isNew ? null : lead);
   $('#btnRegistrarVisita').disabled = isNew;
+  renderHistorico(isNew ? null : lead);
 
   const meta = $('#metaLine');
   meta.innerHTML = '';
@@ -1074,6 +1075,27 @@ function resizeImagem(file, maxDim, quality) {
   });
 }
 
+// Painel lateral: linha do tempo de atualizações do lead (mais recente no topo)
+function renderHistorico(lead) {
+  const panel = $('#histPanel');
+  const tl = $('#histTimeline');
+  tl.innerHTML = '';
+  if (!lead) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const hist = (lead.historico || []).slice().reverse();
+  if (!hist.length) {
+    tl.append(el('div', 'hist-empty', 'Sem atualizações registradas ainda.'));
+    return;
+  }
+  for (const h of hist) {
+    const e = el('div', 'hist-entry');
+    e.append(el('div', 'hist-when', dataHora(h.data, true)));
+    e.append(el('div', 'hist-who', '👤 ' + (h.autor || 'Sistema')));
+    for (const it of (h.itens || [])) e.append(el('div', 'hist-item', it));
+    tl.append(e);
+  }
+}
+
 function renderVisitas(lead) {
   const visitas = (lead && lead.visitas) || [];
   $('#visitCount').textContent = visitas.length ? `(${visitas.length})` : '';
@@ -1146,9 +1168,9 @@ function pegarLocalizacao() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 8000 });
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
   });
 }
 
@@ -1172,6 +1194,7 @@ async function salvarVisita() {
       foto: visitFotoData || '',
       lat: loc.lat,
       lng: loc.lng,
+      acc: loc.acc,
     };
     const res = await api('/api/leads/' + encodeURIComponent(id) + '/visitas', {
       method: 'POST', body: JSON.stringify(body),
@@ -1181,8 +1204,11 @@ async function salvarVisita() {
     if (lead) {
       lead.visitas = lead.visitas || [];
       lead.visitas.push(res.visita);
-      if (body.lat != null) { lead.lat = res.visita.lat; lead.lng = res.visita.lng; }
+      // reflete a visita no histórico do painel (o servidor já gravou)
+      lead.historico = lead.historico || [];
+      lead.historico.push({ data: res.visita.data, autor: res.visita.visitante, itens: ['🚗 Visita registrada' + (res.visita.resultado ? ': ' + res.visita.resultado : '')] });
       renderVisitas(lead);
+      renderHistorico(lead);
       renderBoard();
     }
     $('#visitBackdrop').hidden = true;
@@ -1751,11 +1777,14 @@ document.addEventListener('click', (e) => {
   if (!$('#filterMenu').hidden && !e.target.closest('.filter-add-wrap')) $('#filterMenu').hidden = true;
 });
 $('#btnLimparFiltros').addEventListener('click', () => {
-  const recarrega = !!(currentFilters.produto || currentFilters.pagamento || currentFilters.cidade || currentFilters.hectare || currentFilters.canal);
+  // qualquer filtro server-side ativo exige recarregar a lista
+  const recarrega = Object.keys(FILTER_DEFS).some((k) => currentFilters[k]);
   chipsAtivos = [];
   for (const k of Object.keys(FILTER_DEFS)) currentFilters[k] = '';
   renderChips();
-  if (recarrega) loadLeads(); else renderBoard();
+  if (recarrega) loadLeads();           // loadLeads já re-renderiza a aba atual (inclui Perdidos)
+  else if (currentView === 'perdidos') renderLost();
+  else renderBoard();
 });
 renderChips(); // estado inicial (só a busca + botão "Adicionar filtro")
 

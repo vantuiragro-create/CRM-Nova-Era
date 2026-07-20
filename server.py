@@ -220,6 +220,8 @@ def load_db():
                     l["formas_pagamento"] = []
                 if not isinstance(l.get("visitas"), list):
                     l["visitas"] = []
+                if not isinstance(l.get("historico"), list):
+                    l["historico"] = []
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -264,6 +266,7 @@ def make_lead(partial=None):
         "decisor_cargo": "",  # cargo do decisor, quando for outra pessoa
         "formas_pagamento": [],  # lista de {tipo, valor} (misto = varias)
         "visitas": [],           # visitas de campo: {id, data, visitante, resultado, obs, foto}
+        "historico": [],         # linha do tempo de atualizacoes: {data, autor, itens}
         "tipo": "",        # ""=nao classificado | "produtor" | "prestador"
         "sdr": "",         # SDR que recebeu/qualificou
         "vendedor": "",    # vendedor responsavel apos qualificar
@@ -355,6 +358,72 @@ def sanitiza_pagamentos(value):
             "parcelas": int(_num_pos(item.get("parcelas"), teto=360)) if parcelavel else 0,
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Historico (linha do tempo de atualizacoes do lead)
+# ---------------------------------------------------------------------------
+STATUS_LABEL = {
+    "novo": "Novo lead", "triagem": "Em triagem", "qualificado": "Qualificado",
+    "negociacao": "Em negociação", "proposta": "Proposta enviada",
+    "ganho": "Fechado (ganho)", "perdido": "Perdido",
+}
+HIST_LABEL = {
+    "status": "Etapa", "vendedor": "Vendedor", "sdr": "SDR", "tipo": "Classificação",
+    "valor": "Valor", "produto": "Drone", "regiao": "Cidade", "nome": "Nome",
+    "telefone": "Telefone", "email": "E-mail", "area_cultivada": "Área cultivada",
+    "cargo": "Cargo do contato", "decisor": "Decisor", "decisor_cargo": "Cargo do decisor",
+    "campanha": "Campanha", "observacoes": "Observações", "formas_pagamento": "Forma de pagamento",
+    "origem_canal": "Canal", "lat": "Localização", "lng": "Localização",
+}
+
+
+def registra_hist(lead, autor, itens):
+    """Anexa uma entrada na linha do tempo do lead (mantem as ultimas 300)."""
+    itens = [i for i in itens if i]
+    if not itens:
+        return
+    lead.setdefault("historico", []).append({
+        "data": now_iso(), "autor": autor or "Sistema", "itens": itens,
+    })
+    if len(lead["historico"]) > 300:
+        lead["historico"] = lead["historico"][-300:]
+
+
+def descreve_mudancas(antes, depois, campos):
+    """Gera frases legiveis do que mudou (so os campos informados)."""
+    itens = []
+    vistos = set()
+    for k in campos:
+        if k in ("lat", "lng"):
+            k = "localizacao"
+        if k in vistos:
+            continue
+        vistos.add(k)
+        if k == "localizacao":
+            if antes.get("lat") != depois.get("lat") or antes.get("lng") != depois.get("lng"):
+                itens.append("📍 Localização da fazenda atualizada")
+            continue
+        a, d = antes.get(k), depois.get(k)
+        if a == d:
+            continue
+        if k == "status":
+            itens.append("➡️ Etapa: %s → %s" % (STATUS_LABEL.get(a, a or "—"), STATUS_LABEL.get(d, d)))
+        elif k == "tipo":
+            itens.append("✅ Classificado como %s" % (d or "—"))
+        elif k == "valor":
+            itens.append("💰 Valor: R$ %s" % ("{:,.0f}".format(float(d or 0)).replace(",", ".")))
+        elif k == "vendedor":
+            itens.append("👤 Vendedor: %s" % (d or "(removido)"))
+        elif k == "sdr":
+            itens.append("📞 SDR: %s" % (d or "(removido)"))
+        elif k == "formas_pagamento":
+            itens.append("💳 Forma de pagamento atualizada")
+        elif k == "observacoes":
+            itens.append("📝 Observações atualizadas")
+        elif k in HIST_LABEL:
+            itens.append("✏️ %s: %s" % (HIST_LABEL[k], str(d)[:60] if d else "(vazio)"))
+    return itens
 
 
 def apply_updates(lead, updates):
@@ -724,6 +793,9 @@ def renomeia_dono_leads(antigo, novo):
         for campo in ("sdr", "vendedor", "responsavel"):
             if l.get(campo) == antigo:
                 l[campo] = novo
+        for v in l.get("visitas", []):
+            if v.get("visitante") == antigo:
+                v["visitante"] = novo
 
 
 def user_publico(u):
@@ -1082,6 +1154,9 @@ def handle_chatwoot_event(payload):
                 if lead.get("status") == "perdido":
                     lead["status"] = "novo"
                     lead["tipo"] = ""  # volta para a triagem do SDR
+                    registra_hist(lead, "Chatwoot", ["🔄 Cliente voltou pelo Chatwoot — reaberto na triagem"])
+                else:
+                    registra_hist(lead, "Chatwoot", ["💬 Nova conversa no Chatwoot"])
                 print("[webhook] conversa nova %s reconhecida -> lead %s" % (
                     conversation_id, lead.get("nome") or lead["id"]))
 
@@ -1094,6 +1169,10 @@ def handle_chatwoot_event(payload):
             if sdr:
                 lead["sdr"] = sdr
                 lead["responsavel"] = sdr
+            registra_hist(lead, "Chatwoot", [
+                "🆕 Lead recebido do Chatwoot" + (" (canal: %s)" % canal if canal else ""),
+                "📞 SDR: %s (rodízio)" % sdr if sdr else "",
+            ])
             _db["leads"].append(lead)
             save_db()
             print("[webhook] novo lead: %s -> SDR %s (canal: %s)" % (
@@ -1741,18 +1820,24 @@ class Handler(BaseHTTPRequestHandler):
                     la, lo = float(body.get("lat")), float(body.get("lng"))
                 except (TypeError, ValueError):
                     return self.send_json(400, {"error": "É obrigatório registrar a localização (GPS) da visita — permita o acesso à localização"})
-                if not (math.isfinite(la) and math.isfinite(lo) and abs(la) <= 90 and abs(lo) <= 180):
+                if not (math.isfinite(la) and math.isfinite(lo) and abs(la) <= 90 and abs(lo) <= 180) \
+                        or (abs(la) < 0.0001 and abs(lo) < 0.0001):  # 0,0 = leitura invalida
                     return self.send_json(400, {"error": "Localização (GPS) inválida"})
                 la, lo = round(la, 6), round(lo, 6)
-                vid = new_id()
                 try:
-                    foto = salva_foto_visita(body.get("foto"), vid)
-                except ValueError as e:
-                    return self.send_json(400, {"error": str(e)})
+                    acc = float(body.get("acc"))  # precisao em metros (se enviada)
+                except (TypeError, ValueError):
+                    acc = None
+                vid = new_id()
                 with _lock:
                     lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
                     if not lead or not pode_ver_lead(user, lead):
                         return self.send_json(404, {"error": "Lead nao encontrado"})
+                    # foto so e gravada em disco APOS confirmar o lead (evita arquivo orfao)
+                    try:
+                        foto = salva_foto_visita(body.get("foto"), vid)
+                    except ValueError as e:
+                        return self.send_json(400, {"error": str(e)})
                     visita = {
                         "id": vid,
                         "data": now_iso(),
@@ -1763,8 +1848,13 @@ class Handler(BaseHTTPRequestHandler):
                         "lat": la, "lng": lo,
                     }
                     lead.setdefault("visitas", []).append(visita)
-                    # o vendedor está na fazenda: atualiza a localização exata do lead
-                    lead["lat"], lead["lng"] = la, lo
+                    # So atualiza a localizacao da fazenda se ela ainda nao foi
+                    # ajustada, ou se a leitura for precisa (<=150 m). Assim uma
+                    # posicao ruim (Wi-Fi/desktop) nao apaga um pino ja acertado.
+                    sem_local = lead.get("lat") is None or lead.get("lng") is None
+                    if sem_local or (acc is not None and acc <= 150):
+                        lead["lat"], lead["lng"] = la, lo
+                    registra_hist(lead, user["nome"], ["🚗 Visita registrada" + (": " + resultado if resultado else "")])
                     lead["updated_at"] = now_iso()
                     save_db()
                     return self.send_json(201, {"visita": visita, "total": len(lead["visitas"])})
@@ -1819,6 +1909,7 @@ class Handler(BaseHTTPRequestHandler):
                 if dup:
                     return self.send_json(400, {"error": "Já existe um lead com esse %s: %s" % (
                         campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
+                registra_hist(lead, user["nome"], ["🆕 Lead criado (cadastro manual)"])
                 _db["leads"].append(lead)
                 save_db()
                 return self.send_json(201, {"lead": lead})
@@ -1861,7 +1952,10 @@ class Handler(BaseHTTPRequestHandler):
                         if dup:
                             return self.send_json(400, {"error": "Outro lead já usa esse %s: %s" % (
                                 campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
+                    # registra no historico o que mudou (antes de sobrescrever)
+                    itens = descreve_mudancas(lead, tentativa, list(body.keys()))
                     lead.update(tentativa)
+                    registra_hist(lead, user["nome"], itens)
                     save_db()
                     return self.send_json(200, {"lead": lead})
                 if method == "DELETE":
