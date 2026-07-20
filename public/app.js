@@ -450,15 +450,43 @@ function setView(view) {
   $('#tabSDR').classList.toggle('active', view === 'sdr');
   $('#tabProdutor').classList.toggle('active', view === 'produtor');
   $('#tabPrestador').classList.toggle('active', view === 'prestador');
+  $('#tabPerdidos').classList.toggle('active', view === 'perdidos');
   $('#tabMap').classList.toggle('active', view === 'map');
-  $('#boardWrap').hidden = view === 'map';
+  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos');
   $('#mapWrap').hidden = view !== 'map';
+  $('#lostWrap').hidden = view !== 'perdidos';
   if (view === 'map') {
     ensureMap();
     // o container acabou de ficar visível; o Leaflet precisa remedir
     setTimeout(() => { map.invalidateSize(); renderMap(); }, 60);
+  } else if (view === 'perdidos') {
+    renderLost();
   } else {
     renderBoard();
+  }
+}
+
+// ---- Aba Negócios perdidos: lista todos os leads perdidos (para resgate) ----
+function renderLost() {
+  const perdidos = leadsCache.filter((l) => l.status === 'perdido');
+  const head = $('#lostHead');
+  const valor = perdidos.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  head.innerHTML = '';
+  head.append(el('div', 'lost-count', `🚩 ${perdidos.length} negócio${perdidos.length !== 1 ? 's' : ''} perdido${perdidos.length !== 1 ? 's' : ''}`));
+  if (valor > 0) head.append(el('div', 'lost-sub', 'Valor que escapou: ' + brl(valor)));
+  head.append(el('div', 'lost-sub', 'Abra um card para reativar (mudar a etapa) e resgatar o cliente.'));
+
+  const grid = $('#lostGrid');
+  grid.innerHTML = '';
+  if (!perdidos.length) {
+    grid.append(el('div', 'lost-empty', 'Nenhum negócio perdido. 🎉'));
+    return;
+  }
+  perdidos.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  for (const lead of perdidos) {
+    const card = renderCard(lead);
+    card.draggable = false; // aqui não se arrasta; abre para reativar
+    grid.append(card);
   }
 }
 
@@ -480,8 +508,8 @@ async function loadLeads() {
   const data = await api('/api/leads?' + params.toString());
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
-  renderBoard();
-  if (currentView === 'map') renderMap();
+  if (currentView === 'perdidos') renderLost();
+  else { renderBoard(); if (currentView === 'map') renderMap(); }
 }
 
 async function refreshAll() {
@@ -1094,7 +1122,6 @@ function openVisitModal() {
   $('#visitFoto').value = '';
   $('#visitResultado').value = '';
   $('#visitObs').value = '';
-  $('#visitGeo').checked = false;
   $('#visitPreview').hidden = true;
   $('#visitPreview').innerHTML = '';
   $('#visitLeadNome').textContent = form.nome.value || 'Lead';
@@ -1129,18 +1156,23 @@ async function salvarVisita() {
   const id = form.id.value;
   if (!id) return;
   const btn = $('#visitSalvar');
-  btn.disabled = true; btn.textContent = 'Salvando…';
+  btn.disabled = true; btn.textContent = 'Obtendo localização…';
   try {
+    // GPS é obrigatório: sem localização, a visita não é registrada
+    const loc = await pegarLocalizacao();
+    if (!loc) {
+      toast('📍 Ative/permita a localização (GPS) para registrar a visita');
+      btn.disabled = false; btn.textContent = 'Salvar visita';
+      return;
+    }
+    btn.textContent = 'Salvando…';
     const body = {
       resultado: $('#visitResultado').value,
       obs: $('#visitObs').value,
       foto: visitFotoData || '',
+      lat: loc.lat,
+      lng: loc.lng,
     };
-    if ($('#visitGeo').checked) {
-      const loc = await pegarLocalizacao();
-      if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
-      else toast('Não consegui pegar o GPS — visita salva sem localização');
-    }
     const res = await api('/api/leads/' + encodeURIComponent(id) + '/visitas', {
       method: 'POST', body: JSON.stringify(body),
     });
@@ -1586,6 +1618,7 @@ document.addEventListener('keydown', (e) => {
 $('#tabSDR').addEventListener('click', () => setView('sdr'));
 $('#tabProdutor').addEventListener('click', () => setView('produtor'));
 $('#tabPrestador').addEventListener('click', () => setView('prestador'));
+$('#tabPerdidos').addEventListener('click', () => setView('perdidos'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento

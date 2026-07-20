@@ -35,6 +35,7 @@
       <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
       <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
       <button class="view-tab" id="tabPrestador" role="tab">🔧 Prestadores</button>
+      <button class="view-tab" id="tabPerdidos" role="tab">🚩 Perdidos</button>
       <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
     </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
@@ -55,6 +56,11 @@
 
   <main class="board-wrap" id="boardWrap">
     <div class="swimboard" id="swimboard"><!-- swimlanes via JS --></div>
+  </main>
+
+  <main class="lost-wrap" id="lostWrap" hidden>
+    <div class="lost-head" id="lostHead"></div>
+    <div class="lost-grid" id="lostGrid"></div>
   </main>
 
   <main class="map-wrap" id="mapWrap" hidden>
@@ -237,10 +243,7 @@
         <label>Observações da visita
           <textarea id="visitObs" rows="3" placeholder="O que foi conversado, próximos passos…"></textarea>
         </label>
-        <label class="visit-geo">
-          <input type="checkbox" id="visitGeo" />
-          Marcar a localização atual como a fazenda deste cliente (usa o GPS do celular)
-        </label>
+        <div class="visit-geo-info" id="visitGeoInfo">📍 A localização (GPS) é registrada automaticamente ao salvar — é obrigatória.</div>
       </div>
       <div class="modal-foot">
         <div class="spacer"></div>

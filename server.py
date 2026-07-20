@@ -1736,6 +1736,14 @@ class Handler(BaseHTTPRequestHandler):
                 resultado = str(body.get("resultado") or "").strip()
                 if resultado and resultado not in RESULTADOS_VISITA:
                     return self.send_json(400, {"error": "Resultado de visita inválido"})
+                # GPS obrigatorio: toda visita tem que registrar a localizacao
+                try:
+                    la, lo = float(body.get("lat")), float(body.get("lng"))
+                except (TypeError, ValueError):
+                    return self.send_json(400, {"error": "É obrigatório registrar a localização (GPS) da visita — permita o acesso à localização"})
+                if not (math.isfinite(la) and math.isfinite(lo) and abs(la) <= 90 and abs(lo) <= 180):
+                    return self.send_json(400, {"error": "Localização (GPS) inválida"})
+                la, lo = round(la, 6), round(lo, 6)
                 vid = new_id()
                 try:
                     foto = salva_foto_visita(body.get("foto"), vid)
@@ -1752,17 +1760,11 @@ class Handler(BaseHTTPRequestHandler):
                         "resultado": resultado,
                         "obs": str(body.get("obs") or "").strip()[:2000],
                         "foto": foto,
+                        "lat": la, "lng": lo,
                     }
                     lead.setdefault("visitas", []).append(visita)
-                    # se o vendedor marcou a localizacao durante a visita, atualiza a fazenda
-                    try:
-                        if body.get("lat") not in ("", None) and body.get("lng") not in ("", None):
-                            la, lo = float(body["lat"]), float(body["lng"])
-                            if math.isfinite(la) and math.isfinite(lo) and abs(la) <= 90 and abs(lo) <= 180:
-                                lead["lat"], lead["lng"] = round(la, 6), round(lo, 6)
-                                visita["lat"], visita["lng"] = lead["lat"], lead["lng"]
-                    except (TypeError, ValueError):
-                        pass
+                    # o vendedor está na fazenda: atualiza a localização exata do lead
+                    lead["lat"], lead["lng"] = la, lo
                     lead["updated_at"] = now_iso()
                     save_db()
                     return self.send_json(201, {"visita": visita, "total": len(lead["visitas"])})
