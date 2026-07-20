@@ -159,6 +159,7 @@ body {
 .lost-wrap[hidden] { display: none; }
 .lost-head { margin-bottom: 12px; }
 .lost-count { font-size: 18px; font-weight: 800; color: var(--danger); }
+#desistiuHead .lost-count { color: #718096; } /* desistiu usa cinza, não o vermelho de perdido */
 .lost-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .lost-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; align-items: start; }
 .lost-grid .card { margin-bottom: 0; cursor: pointer; }
@@ -193,6 +194,7 @@ body {
 .lead-pin.exato { background: var(--green-600); }
 .lead-pin.won { background: var(--green-600); }
 .lead-pin.lost { background: var(--danger); }
+.lead-pin.gaveup { background: #718096; }
 /* aguardando o banco: anel azul (perde p/ "movendo" e p/ o calor, logo abaixo) */
 .lead-pin.aguardando { box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 3px rgba(43,108,176,0.45); }
 .lead-pin.movendo { box-shadow: 0 0 0 4px rgba(112, 212, 75, 0.6); animation: pulse 1s infinite; }
@@ -312,9 +314,11 @@ body {
 .st-ganho .dot { background: var(--green-600); }
 .col-h.st-financiamento { background: #eef5ff; }
 .st-perdido .dot { background: var(--danger); }
+.st-desistiu .dot { background: #718096; }
 .col-h.st-q_prod, .col-h.st-q_prest { background: var(--green-100); }
 .col-h.st-ganho { background: #eafaf0; }
 .col-h.st-perdido, .col-h.st-perd_sdr { background: #fdece9; }
+.col-h.st-desistiu { background: #eef1f5; }
 
 /* ---------- Card ---------- */
 .card {
@@ -327,6 +331,7 @@ body {
 .card.dragging { opacity: 0.4; }
 .card.won { border-left: 4px solid var(--green-600); }
 .card.lost { border-left: 4px solid var(--danger); }
+.card.gaveup { border-left: 4px solid #718096; }
 .card .name { font-weight: 700; font-size: 13px; margin-bottom: 2px; line-height: 1.25; }
 .card .name .flag { font-size: 11px; margin-right: 3px; }
 .card .row { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; margin-top: 2px; }

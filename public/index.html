@@ -37,6 +37,7 @@
       <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
       <button class="view-tab" id="tabPrestador" role="tab">🔧 Prestadores</button>
       <button class="view-tab" id="tabPerdidos" role="tab">🚩 Perdidos</button>
+      <button class="view-tab" id="tabDesistiu" role="tab">🚫 Desistiu</button>
       <button class="view-tab" id="tabMap" role="tab">🗺️ Mapa</button>
     </div>
     <input type="search" id="search" placeholder="Buscar por nome, telefone, região, produto…" />
@@ -70,12 +71,18 @@
     <div class="lost-grid" id="lostGrid"></div>
   </main>
 
+  <main class="lost-wrap" id="desistiuWrap" hidden>
+    <div class="lost-head" id="desistiuHead"></div>
+    <div class="lost-grid" id="desistiuGrid"></div>
+  </main>
+
   <main class="map-wrap" id="mapWrap" hidden>
     <div class="map-legend">
       <span><span class="pin-dot aprox"></span> Aproximado (centro da cidade)</span>
       <span><span class="pin-dot exato"></span> Fazenda exata (ajustada)</span>
       <span>👍 Contato recente · 🔥 Lead quente (várias atualizações)</span>
       <span>⏳ Aguardando liberação do financiamento</span>
+      <span>🚫 Desistiu da compra</span>
       <span class="map-hint">Arraste um pino até a fazenda do cliente para salvar a localização exata.</span>
     </div>
     <div id="map"></div>

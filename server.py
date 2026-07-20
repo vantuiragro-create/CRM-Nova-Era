@@ -57,7 +57,7 @@ RESULTADOS_VISITA = (
 #                            prestador; cada tipo tem sua aba)
 #   perdido               -> venda/lead que nao avancou (guardado p/ resgate)
 STAGES = ["novo", "triagem", "qualificado", "decidindo", "negociacao", "proposta",
-          "financiamento", "ganho", "perdido"]
+          "financiamento", "ganho", "desistiu", "perdido"]
 
 # Etapas do funil de vendas (ja qualificado). "decidindo" = cliente avaliando se
 # vai adquirir o drone (antes de negociar); "financiamento" = proposta aceita,
@@ -229,6 +229,9 @@ def load_db():
                 l.setdefault("perdido_em", None)
                 if l.get("status") == "perdido" and not l.get("perdido_em"):
                     l["perdido_em"] = l.get("updated_at") or l.get("created_at")
+                l.setdefault("desistiu_em", None)
+                if l.get("status") == "desistiu" and not l.get("desistiu_em"):
+                    l["desistiu_em"] = l.get("updated_at") or l.get("created_at")
                 if not isinstance(l.get("formas_pagamento"), list):
                     l["formas_pagamento"] = []
                 if not isinstance(l.get("visitas"), list):
@@ -303,6 +306,7 @@ def make_lead(partial=None):
         "atendido_em": None,     # quando um vendedor assumiu (mede a agilidade)
         "ganho_em": None,        # data em que o negocio foi GANHO (fixa; p/ relatorio)
         "perdido_em": None,      # data em que o negocio foi PERDIDO (fixa; p/ relatorio)
+        "desistiu_em": None,     # data em que o cliente DESISTIU da compra (fixa)
         "created_at": now_iso(),  # data/hora de ENTRADA do lead
         "updated_at": now_iso(),
     }
@@ -382,7 +386,7 @@ STATUS_LABEL = {
     "novo": "Novo lead", "triagem": "Em triagem", "qualificado": "Qualificado",
     "decidindo": "Decidindo", "negociacao": "Em negociação", "proposta": "Proposta enviada",
     "financiamento": "Aguardando financiamento",
-    "ganho": "Fechado (ganho)", "perdido": "Perdido",
+    "ganho": "Fechado (ganho)", "desistiu": "Desistiu da compra", "perdido": "Perdido",
 }
 HIST_LABEL = {
     "status": "Etapa", "vendedor": "Vendedor", "sdr": "SDR", "tipo": "Classificação",
@@ -512,6 +516,8 @@ def apply_updates(lead, updates):
         lead["ganho_em"] = now_iso()
     if lead.get("status") == "perdido" and status_antes != "perdido":
         lead["perdido_em"] = now_iso()
+    if lead.get("status") == "desistiu" and status_antes != "desistiu":
+        lead["desistiu_em"] = now_iso()
 
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
@@ -732,6 +738,8 @@ def importar_csv(texto):
                 lead["ganho_em"] = now_iso()
             elif lead["status"] == "perdido":
                 lead["perdido_em"] = now_iso()
+            elif lead["status"] == "desistiu":
+                lead["desistiu_em"] = now_iso()
             _db["leads"].append(lead)
             criados += 1
         if criados:
@@ -853,7 +861,7 @@ VENDAS_STATUSES = SALES_STAGES  # etapas em que o lead esta no funil de vendas
 
 def no_funil_vendas(lead):
     return lead.get("status") in VENDAS_STATUSES or (
-        lead.get("status") == "perdido" and bool(lead.get("tipo")))
+        lead.get("status") in ("perdido", "desistiu") and bool(lead.get("tipo")))
 
 
 def pode_ver_lead(user, lead):
@@ -1180,13 +1188,13 @@ def handle_chatwoot_event(payload):
                 or (email_n and str(l.get("email") or "").strip().lower() == email_n))]
             if candidatos:
                 # prefere um lead em atendimento; so cai num encerrado se nao houver
-                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido")]
+                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido", "desistiu")]
                 lead = (ativos or candidatos)[0]
                 if conversation_id is not None:
                     lead["chatwoot_conversation_id"] = conversation_id
-                # cliente que estava dado como perdido/fora do perfil voltou:
+                # cliente que estava dado como perdido/desistiu voltou:
                 # reentra na triagem para a equipe enxergar
-                if lead.get("status") == "perdido":
+                if lead.get("status") in ("perdido", "desistiu"):
                     lead["status"] = "novo"
                     lead["tipo"] = ""  # volta para a triagem do SDR
                     registra_hist(lead, "Chatwoot", ["🔄 Cliente voltou pelo Chatwoot — reaberto na triagem"])
@@ -1506,7 +1514,7 @@ class Handler(BaseHTTPRequestHandler):
                     s = l.get("status") if l.get("status") in STAGES else "novo"
                     por_status[s]["count"] += 1
                     por_status[s]["valor"] += float(l.get("valor") or 0)
-                    if l.get("status") != "perdido":
+                    if l.get("status") not in ("perdido", "desistiu"):
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
@@ -1642,7 +1650,7 @@ class Handler(BaseHTTPRequestHandler):
                     if l.get("status") == "ganho":
                         row["ganhos"] += 1
                         row["valor_ganho"] += valor
-                    elif l.get("status") != "perdido":
+                    elif l.get("status") not in ("perdido", "desistiu"):
                         row["valor_aberto"] += valor
                 out = sorted(rows.values(), key=lambda r: r["leads"], reverse=True)
                 if sem["leads"]:
@@ -1664,7 +1672,7 @@ class Handler(BaseHTTPRequestHandler):
                     return por_dia.setdefault(d, {
                         "dia": d, "recebidos": 0, "recebidos_chatwoot": 0,
                         "qualificados": 0, "produtores": 0, "prestadores": 0,
-                        "ganhos": 0, "perdidos": 0})
+                        "ganhos": 0, "perdidos": 0, "desistidos": 0})
 
                 for l in _db["leads"]:
                     d = dia_brt(l.get("created_at"))
@@ -1689,6 +1697,10 @@ class Handler(BaseHTTPRequestHandler):
                         dp = dia_brt(l.get("perdido_em") or l.get("updated_at"))
                         if dp:
                             bucket(dp)["perdidos"] += 1
+                    elif l.get("status") == "desistiu":
+                        dd = dia_brt(l.get("desistiu_em") or l.get("updated_at"))
+                        if dd:
+                            bucket(dd)["desistidos"] += 1
 
                 linhas = sorted(por_dia.values(), key=lambda r: r["dia"], reverse=True)[:dias]
                 totais = {"recebidos": sum(r["recebidos"] for r in linhas),
@@ -1850,9 +1862,9 @@ class Handler(BaseHTTPRequestHandler):
                 for lead in _db["leads"]:
                     if lead["id"] not in alvo or not pode_ver_lead(user, lead):
                         continue
-                    # Negocio ja fechado (ganho/perdido) NAO e tocado: reatribuir
-                    # o dono de uma venda antiga bagunca historico e comissao.
-                    if lead.get("status") in ("ganho", "perdido"):
+                    # Negocio ja encerrado (ganho/perdido/desistiu) NAO e tocado:
+                    # reatribuir o dono de um caso encerrado bagunca historico.
+                    if lead.get("status") in ("ganho", "perdido", "desistiu"):
                         fechados += 1
                         continue
                     u = dict(updates)

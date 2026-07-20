@@ -10,10 +10,11 @@ const STAGE_LABELS = {
   proposta: 'Proposta enviada (Vendas)',
   financiamento: 'Aguardando financiamento (Vendas)',
   ganho: 'Fechado (ganho)',
+  desistiu: 'Desistiu da compra',
   perdido: 'Perdido',
 };
 let STAGES = ['novo', 'triagem', 'qualificado', 'decidindo', 'negociacao', 'proposta',
-  'financiamento', 'ganho', 'perdido'];
+  'financiamento', 'ganho', 'desistiu', 'perdido'];
 
 // Cada coluna carrega o "patch" que o arraste aplica e um "match" que decide
 // quais leads ficam nela. Colunas de qualificação (q_prod/q_prest) não guardam
@@ -30,6 +31,7 @@ const COL = {
   proposta: { key: 'proposta', label: 'Proposta enviada', patch: { status: 'proposta' }, match: (l) => l.status === 'proposta' },
   financiamento: { key: 'financiamento', label: '⏳ Aguardando financiamento', patch: { status: 'financiamento' }, match: (l) => l.status === 'financiamento' },
   ganho: { key: 'ganho', label: '🏆 Ganho', patch: { status: 'ganho' }, match: (l) => l.status === 'ganho' },
+  desistiu: { key: 'desistiu', label: '🚫 Desistiu', patch: { status: 'desistiu' }, match: (l) => l.status === 'desistiu' },
   perdido: { key: 'perdido', label: '🚩 Perdido', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
 };
 
@@ -43,13 +45,13 @@ const FUNIS = {
   },
   produtor: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
-    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
-    inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'perdido'),
+    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.desistiu, COL.perdido],
+    inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'desistiu' || l.status === 'perdido'),
   },
   prestador: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'prestador',
-    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.perdido],
-    inclui: (l) => l.tipo === 'prestador' && (SALES.includes(l.status) || l.status === 'perdido'),
+    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.desistiu, COL.perdido],
+    inclui: (l) => l.tipo === 'prestador' && (SALES.includes(l.status) || l.status === 'desistiu' || l.status === 'perdido'),
   },
 };
 const SALES = ['qualificado', 'decidindo', 'negociacao', 'proposta', 'financiamento', 'ganho'];
@@ -200,6 +202,7 @@ function atualizaBotaoLimpar() {
 // contar o cache inteiro daria "tudo certo" com a tela vazia.
 function leadsDaVisao() {
   if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido');
+  if (currentView === 'desistiu') return leadsCache.filter((l) => l.status === 'desistiu');
   if (currentView === 'map') return leadsCache.slice();
   const funil = FUNIS[currentView] || FUNIS.sdr;
   return leadsCache.filter(funil.inclui);
@@ -207,8 +210,13 @@ function leadsDaVisao() {
 function leadsNaVisao() { return leadsDaVisao().length; }
 const VIEW_LABEL = {
   sdr: 'Funil SDR', produtor: 'Produtores', prestador: 'Prestadores',
-  perdidos: 'Perdidos', map: 'Mapa',
+  perdidos: 'Perdidos', desistiu: 'Desistiu', map: 'Mapa',
 };
+// resultados terminais que a ação em massa nunca deve alterar
+const STATUS_ENCERRADOS = ['ganho', 'perdido', 'desistiu'];
+function alvosMassa() {
+  return leadsDaVisao().filter((l) => !STATUS_ENCERRADOS.includes(l.status));
+}
 
 // Se a busca/filtro escondeu os leads DESTA aba, avisa em vez de deixar um quadro
 // mudo (que parecia "sumiu tudo / bugou") e oferece o botão para limpar.
@@ -454,9 +462,11 @@ const papelLabel = (p) => PAPEL_LABEL[p] || p || '';
 function pinClass(lead, exato) {
   if (lead.status === 'ganho') return 'won';
   if (lead.status === 'perdido') return 'lost';
+  if (lead.status === 'desistiu') return 'gaveup';
   return exato ? 'exato' : 'aprox';
 }
 function pinFlag(lead) {
+  if (lead.status === 'desistiu') return '<span class="pin-flag">🚫</span>';
   if (lead.status === 'ganho') return '<span class="pin-flag">🟢</span>';
   if (lead.status === 'perdido') return '<span class="pin-flag">🔴</span>';
   return '';
@@ -493,6 +503,7 @@ function renderMap() {
     const nome = el('div', 'pp-nome');
     if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢 '));
     else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴 '));
+    else if (lead.status === 'desistiu') nome.append(el('span', 'flag', '🚫 '));
     nome.append(document.createTextNode(lead.nome || '(sem nome)'));
     pop.append(nome);
     if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · local aproximado')));
@@ -551,45 +562,66 @@ function setView(view) {
   $('#tabProdutor').classList.toggle('active', view === 'produtor');
   $('#tabPrestador').classList.toggle('active', view === 'prestador');
   $('#tabPerdidos').classList.toggle('active', view === 'perdidos');
+  $('#tabDesistiu').classList.toggle('active', view === 'desistiu');
   $('#tabMap').classList.toggle('active', view === 'map');
-  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos');
+  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos' || view === 'desistiu');
   $('#mapWrap').hidden = view !== 'map';
   $('#lostWrap').hidden = view !== 'perdidos';
+  $('#desistiuWrap').hidden = view !== 'desistiu';
   if (view === 'map') {
     ensureMap();
     // o container acabou de ficar visível; o Leaflet precisa remedir
     setTimeout(() => { map.invalidateSize(); renderMap(); }, 60);
   } else if (view === 'perdidos') {
     renderLost();
+  } else if (view === 'desistiu') {
+    renderDesistiu();
   } else {
     renderBoard();
   }
 }
 
-// ---- Aba Negócios perdidos: lista todos os leads perdidos (para resgate) ----
-function renderLost() {
-  const perdidos = leadsCache.filter((l) => l.status === 'perdido');
-  const head = $('#lostHead');
-  const valor = perdidos.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+// Lista de casos encerrados (perdido / desistiu) para resgate. Uma função só
+// para as duas abas nunca divergirem.
+function renderResgate(cfg) {
+  const leads = leadsCache.filter((l) => l.status === cfg.status);
+  const head = $(cfg.head);
+  const valor = leads.reduce((a, l) => a + (Number(l.valor) || 0), 0);
   head.innerHTML = '';
-  head.append(el('div', 'lost-count', `🚩 ${perdidos.length} negócio${perdidos.length !== 1 ? 's' : ''} perdido${perdidos.length !== 1 ? 's' : ''}`));
+  head.append(el('div', 'lost-count', `${cfg.emoji} ${leads.length} ${leads.length === 1 ? cfg.singular : cfg.plural}`));
   if (valor > 0) head.append(el('div', 'lost-sub', 'Valor que escapou: ' + brl(valor)));
   head.append(el('div', 'lost-sub', 'Abra um card para reativar (mudar a etapa) e resgatar o cliente.'));
 
-  const grid = $('#lostGrid');
+  const grid = $(cfg.grid);
   grid.innerHTML = '';
-  if (!perdidos.length) {
-    grid.append(el('div', 'lost-empty', filtroAtivo()
-      ? 'Nenhum negócio perdido corresponde à busca/filtros atuais.'
-      : 'Nenhum negócio perdido. 🎉'));
+  if (!leads.length) {
+    grid.append(el('div', 'lost-empty', filtroAtivo() ? cfg.vazioFiltro : cfg.vazio));
     return;
   }
-  perdidos.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-  for (const lead of perdidos) {
+  leads.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  for (const lead of leads) {
     const card = renderCard(lead);
     card.draggable = false; // aqui não se arrasta; abre para reativar
     grid.append(card);
   }
+}
+
+function renderLost() {
+  renderResgate({
+    status: 'perdido', head: '#lostHead', grid: '#lostGrid', emoji: '🚩',
+    singular: 'negócio perdido', plural: 'negócios perdidos',
+    vazio: 'Nenhum negócio perdido. 🎉',
+    vazioFiltro: 'Nenhum negócio perdido corresponde à busca/filtros atuais.',
+  });
+}
+
+function renderDesistiu() {
+  renderResgate({
+    status: 'desistiu', head: '#desistiuHead', grid: '#desistiuGrid', emoji: '🚫',
+    singular: 'cliente que desistiu', plural: 'clientes que desistiram',
+    vazio: 'Ninguém desistiu da compra. 🎉',
+    vazioFiltro: 'Nenhuma desistência corresponde à busca/filtros atuais.',
+  });
 }
 
 async function loadLeads() {
@@ -612,6 +644,7 @@ async function loadLeads() {
   leadsCache = data.leads || [];
   primeiroLoadFeito = true;
   if (currentView === 'perdidos') renderLost();
+  else if (currentView === 'desistiu') renderDesistiu();
   else { renderBoard(); if (currentView === 'map') renderMap(); }
   atualizaEstadoVazio();
 }
@@ -756,13 +789,14 @@ function renderCell(lane, col, cellLeads, funil) {
 }
 
 function renderCard(lead) {
-  const card = el('div', 'card' + (lead.status === 'ganho' ? ' won' : lead.status === 'perdido' ? ' lost' : ''));
+  const card = el('div', 'card' + (lead.status === 'ganho' ? ' won' : lead.status === 'perdido' ? ' lost' : lead.status === 'desistiu' ? ' gaveup' : ''));
   card.draggable = true;
   card.dataset.id = lead.id;
 
   const nome = el('div', 'name');
   if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢'));
   else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴'));
+  else if (lead.status === 'desistiu') nome.append(el('span', 'flag', '🚫'));
   nome.append(document.createTextNode(lead.nome || '(sem nome)'));
   const hz = heatEmoji(lead);
   if (hz) {
@@ -1578,12 +1612,12 @@ async function renderReport() {
     table.innerHTML = '<thead><tr><th>Dia</th>' +
       '<th class="num">Recebidos</th><th class="num">Chatwoot</th>' +
       '<th class="num">Qualificados</th><th class="num">🌾 Prod.</th><th class="num">🔧 Prest.</th>' +
-      '<th class="num">Ganhos</th><th class="num">Perdidos</th></tr></thead>';
+      '<th class="num">Ganhos</th><th class="num">Perdidos</th><th class="num">Desistiu</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const r of reportCache) {
       const tr = document.createElement('tr');
       const cells = [fmtDia(r.dia), r.recebidos, r.recebidos_chatwoot, r.qualificados,
-        r.produtores, r.prestadores, r.ganhos, r.perdidos];
+        r.produtores, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0];
       cells.forEach((v, i) => {
         const td = document.createElement('td');
         if (i >= 1) td.className = 'num';
@@ -1603,9 +1637,9 @@ async function renderReport() {
 
 function baixarReportCsv() {
   if (!reportCache.length) { toast('Nada para exportar'); return; }
-  const head = 'dia;recebidos;recebidos_chatwoot;qualificados;produtores;prestadores;ganhos;perdidos';
+  const head = 'dia;recebidos;recebidos_chatwoot;qualificados;produtores;prestadores;ganhos;perdidos;desistidos';
   const linhas = reportCache.map((r) => [r.dia, r.recebidos, r.recebidos_chatwoot,
-    r.qualificados, r.produtores, r.prestadores, r.ganhos, r.perdidos].join(';'));
+    r.qualificados, r.produtores, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0].join(';'));
   const csv = '﻿' + head + '\n' + linhas.join('\n') + '\n';
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
@@ -1641,18 +1675,20 @@ function abrirBulk() {
   $('#bulkTipo').value = '';
   $('#bulkQualificar').checked = false;
   $('#bulkResult').innerHTML = '';
-  const n = leadsDaVisao().length;   // exatamente o que está na tela desta aba
+  const alvos = alvosMassa();        // só os não-encerrados desta aba
+  const n = alvos.length;
+  const encerrados = leadsDaVisao().length - n;
   const aba = VIEW_LABEL[currentView] || currentView;
   $('#bulkResumo').textContent = n
     ? `${n} cliente${n > 1 ? 's' : ''} da aba “${aba}” ${n > 1 ? 'serão alterados' : 'será alterado'}.`
-    : `Nenhum cliente na aba “${aba}” — troque de aba ou ajuste a busca/filtros.`;
+      + (encerrados ? ` (${encerrados} já encerrado(s) não conta(m).)` : '')
+    : `Nenhum cliente alterável na aba “${aba}” — troque de aba ou ajuste a busca/filtros.`;
   $('#btnBulkRun').disabled = !n;
   $('#bulkBackdrop').hidden = false;
 }
 
 async function rodarBulk() {
-  const alvos = leadsDaVisao();
-  const ids = alvos.map((l) => l.id);
+  const ids = alvosMassa().map((l) => l.id);   // exclui Ganho/Perdido/Desistiu
   const vendedor = $('#bulkVendedor').value;
   const tipo = $('#bulkTipo').value;
   const qualificar = $('#bulkQualificar').checked;
@@ -1662,7 +1698,7 @@ async function rodarBulk() {
     qualificar && 'mover para o funil de vendas'].filter(Boolean).join(' · ');
   const aba = VIEW_LABEL[currentView] || currentView;
   if (!confirm(`Aplicar a ${ids.length} cliente(s) da aba "${aba}"?\n\n${oque}\n\n`
-    + 'Negócios já Ganhos ou Perdidos não serão alterados.')) return;
+    + 'Negócios já encerrados (Ganhos, Perdidos ou Desistidos) não serão alterados.')) return;
   const btn = $('#btnBulkRun');
   btn.disabled = true; btn.textContent = 'Aplicando…';
   try {
@@ -1673,7 +1709,7 @@ async function rodarBulk() {
     box.innerHTML = '';
     box.append(el('div', null, `✅ ${res.atualizados} cliente(s) atualizado(s).`));
     if (res.sem_alteracao) box.append(el('div', null, `• ${res.sem_alteracao} já estava(m) assim (nada mudou).`));
-    if (res.fechados_ignorados) box.append(el('div', null, `• ${res.fechados_ignorados} negócio(s) Ganho/Perdido não foram tocados.`));
+    if (res.fechados_ignorados) box.append(el('div', null, `• ${res.fechados_ignorados} negócio(s) já encerrado(s) não foram tocados.`));
     for (const f of (res.falhas || []).slice(0, 20)) {
       box.append(el('div', 'import-erro', `⚠️ ${f.nome}: ${f.motivo}`));
     }
@@ -1872,6 +1908,7 @@ $('#tabSDR').addEventListener('click', () => setView('sdr'));
 $('#tabProdutor').addEventListener('click', () => setView('produtor'));
 $('#tabPrestador').addEventListener('click', () => setView('prestador'));
 $('#tabPerdidos').addEventListener('click', () => setView('perdidos'));
+$('#tabDesistiu').addEventListener('click', () => setView('desistiu'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento
@@ -2013,6 +2050,7 @@ function limparFiltros() {
   renderChips();
   if (recarrega) loadLeads();           // loadLeads já re-renderiza a aba atual (inclui Perdidos)
   else if (currentView === 'perdidos') renderLost();
+  else if (currentView === 'desistiu') renderDesistiu();
   else renderBoard();
 }
 $('#btnLimparFiltros').addEventListener('click', limparFiltros);
