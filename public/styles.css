@@ -41,6 +41,10 @@ body {
   align-items: center;
   gap: 12px;
   padding: 8px 18px;
+  /* aberto como app no iPhone (notch): empurra o conteúdo p/ baixo da status bar */
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(18px, env(safe-area-inset-left));
+  padding-right: max(18px, env(safe-area-inset-right));
   background: linear-gradient(120deg, var(--green-700), var(--green-600));
   color: #fff;
   box-shadow: var(--shadow);
