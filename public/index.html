@@ -20,12 +20,17 @@
     <div class="stats" id="stats"><!-- preenchido via JS --></div>
     <div class="actions">
       <span class="user-chip" id="userChip"></span>
-      <button class="btn ghost" id="btnBulk" title="Alterar vários clientes de uma vez" hidden>⚡ Em massa</button>
-      <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar</button>
-      <button class="btn ghost" id="btnReport" title="Relatório diário" hidden>📊 Relatório</button>
-      <button class="btn ghost" id="btnCampaigns" title="Campanhas" hidden>📣 Campanhas</button>
-      <button class="btn ghost" id="btnUsers" title="Usuários e acessos" hidden>👥 Usuários</button>
-      <button class="btn ghost" id="btnRefresh" title="Atualizar">↻</button>
+      <div class="manage-wrap">
+        <button class="btn ghost" id="btnManage" title="Ferramentas de gestão" hidden>⚙️ Gerenciar ▾</button>
+        <div class="manage-menu" id="manageMenu" hidden>
+          <button class="btn ghost" id="btnBulk" title="Alterar vários clientes de uma vez" hidden>⚡ Alterar em massa</button>
+          <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar planilha</button>
+          <button class="btn ghost" id="btnReport" title="Relatório diário" hidden>📊 Relatório</button>
+          <button class="btn ghost" id="btnCampaigns" title="Campanhas" hidden>📣 Campanhas</button>
+          <button class="btn ghost" id="btnUsers" title="Usuários e acessos" hidden>👥 Usuários</button>
+        </div>
+      </div>
+      <button class="btn ghost icon-only" id="btnRefresh" title="Atualizar">↻</button>
       <button class="btn primary" id="btnNew">+ Novo lead</button>
       <button class="btn ghost" id="btnLogout" title="Sair">Sair</button>
     </div>

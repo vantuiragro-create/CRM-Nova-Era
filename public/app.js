@@ -166,11 +166,11 @@ async function loadStats() {
     const box = $('#stats');
     box.innerHTML = '';
     const cards = [
-      { n: s.total, l: 'Leads no total' },
-      { n: s.produtores || 0, l: '🌾 Produtores rurais' },
-      { n: s.prestadores || 0, l: '🔧 Prestadores de serviço' },
-      { n: (s.por_status.ganho || {}).count || 0, l: 'Negócios ganhos' },
-      { n: brl(s.valor_pipeline), l: 'Valor no pipeline' },
+      { n: s.total, l: 'Leads' },
+      { n: s.produtores || 0, l: '🌾 Produtores' },
+      { n: s.prestadores || 0, l: '🔧 Prestadores' },
+      { n: (s.por_status.ganho || {}).count || 0, l: '🏆 Ganhos' },
+      { n: brl(s.valor_pipeline), l: '💰 Pipeline' },
     ];
     for (const c of cards) {
       const d = el('div', 'stat');
@@ -2037,8 +2037,15 @@ function toggleFilterMenu() {
 }
 
 $('#btnAddFilter').addEventListener('click', (e) => { e.stopPropagation(); toggleFilterMenu(); });
+// menu "Gerenciar" (agrupa as ferramentas de gestão para o topo ficar enxuto)
+$('#btnManage').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('#manageMenu').hidden = !$('#manageMenu').hidden;
+});
+$('#manageMenu').addEventListener('click', () => { $('#manageMenu').hidden = true; });
 document.addEventListener('click', (e) => {
   if (!$('#filterMenu').hidden && !e.target.closest('.filter-add-wrap')) $('#filterMenu').hidden = true;
+  if (!$('#manageMenu').hidden && !e.target.closest('.manage-wrap')) $('#manageMenu').hidden = true;
 });
 function limparFiltros() {
   // qualquer filtro server-side ativo exige recarregar a lista (a busca também)
@@ -2083,6 +2090,7 @@ setInterval(async () => {
 function applyRoleUI() {
   const gestor = me.papel === 'admin' || me.papel === 'gerente';
   $('#userChip').textContent = `👤 ${me.nome} · ${PAPEL_LABEL[me.papel] || me.papel}`;
+  $('#btnManage').hidden = !gestor;   // menu "Gerenciar" só para gestor/admin
   $('#btnBulk').hidden = !gestor;
   $('#btnImport').hidden = !gestor;
   $('#btnReport').hidden = !gestor;
