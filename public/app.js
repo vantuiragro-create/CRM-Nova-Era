@@ -190,9 +190,14 @@ async function loadStats() {
       { n: (s.por_status.ganho || {}).count || 0, l: '🏆 Ganhos' },
       { n: brl(s.valor_pipeline), l: '💰 Pipeline' },
     ];
+    // só aparece quando há pendências (mantém a barra enxuta); clica p/ filtrar
+    if (s.aguardando_resposta) {
+      cards.push({ n: s.aguardando_resposta, l: '📱 Aguardando registro', cls: 'wait', acao: ativarFiltroAguardando });
+    }
     for (const c of cards) {
-      const d = el('div', 'stat');
+      const d = el('div', 'stat' + (c.cls ? ' ' + c.cls : ''));
       d.append(el('div', 'n', String(c.n)), el('div', 'l', c.l));
+      if (c.acao) { d.classList.add('clicavel'); d.title = 'Ver só os que aguardam registro'; d.onclick = c.acao; }
       box.append(d);
     }
     preencheFiltroCidades(s.cidades || []);
@@ -223,9 +228,9 @@ function atualizaBotaoLimpar() {
 function leadsDaVisao() {
   if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido');
   if (currentView === 'desistiu') return leadsCache.filter((l) => l.status === 'desistiu');
+  if (currentView === 'aguardando') return leadsCache.filter((l) => !!l.aguardando_resposta);
   if (currentView === 'map') return leadsCache.slice();
-  const funil = FUNIS[currentView] || FUNIS.sdr;
-  return leadsCache.filter(funil.inclui);
+  return leadsCache.filter((FUNIS[currentView] || FUNIS.sdr).inclui);
 }
 function leadsNaVisao() { return leadsDaVisao().length; }
 const VIEW_LABEL = {
@@ -243,6 +248,7 @@ function alvosMassa() {
 function atualizaEstadoVazio() {
   const box = $('#emptyFiltro');
   if (!box) return;
+  if (currentView === 'aguardando') { box.hidden = true; return; } // tem estado-vazio próprio
   if (!primeiroLoadFeito) { box.hidden = true; return; } // evita piscar no boot
   const vazio = leadsNaVisao() === 0 && filtroAtivo();
   const mudou = box.hidden === vazio;
@@ -475,6 +481,30 @@ function heatEmoji(lead) {
   const lv = heatLevel(lead);
   return lv === 'quente' ? '🔥' : lv === 'recente' ? '👍' : '';
 }
+// "Aguardando o vendedor registrar a resposta" (setado ao clicar no WhatsApp).
+// Fica amarelo e, passadas AGUARDA_VERMELHO_H horas sem registro, vira vermelho.
+const AGUARDA_VERMELHO_H = 3;
+function aguardaResposta(lead) {
+  const t = lead && lead.aguardando_resposta ? new Date(lead.aguardando_resposta).getTime() : NaN;
+  if (isNaN(t)) return null;
+  const ms = Date.now() - t;
+  return { ms, urgente: ms >= AGUARDA_VERMELHO_H * 3600000 };
+}
+// Clicar no WhatsApp = "contatei o cliente": marca a pendência de registrar a
+// resposta e anota no histórico. Roda em segundo plano; nunca atrapalha o link.
+async function registrarContatoWhatsapp(id) {
+  if (!id) return;
+  try {
+    const res = await api('/api/leads/' + encodeURIComponent(id) + '/contato-whatsapp', { method: 'POST' });
+    const lead = leadsCache.find((l) => l.id === id);
+    if (lead && res && res.lead) {
+      Object.assign(lead, res.lead);
+      renderBoard();
+      if (form.id.value === id) renderHistorico(lead); // ficha aberta: atualiza o histórico
+      loadStats();
+    }
+  } catch (_) { /* silencioso: abrir a conversa é o que importa */ }
+}
 // papelLabel usa o PAPEL_LABEL definido mais abaixo (seção de Usuários);
 // é chamado só em tempo de execução (renderHistorico), então não há TDZ.
 const papelLabel = (p) => PAPEL_LABEL[p] || p || '';
@@ -550,6 +580,7 @@ function renderMap() {
       const wa = document.createElement('a');
       wa.className = 'pp-btn wa'; wa.href = waH; wa.target = '_blank'; wa.rel = 'noopener';
       wa.textContent = '💬 WhatsApp';
+      wa.addEventListener('click', () => registrarContatoWhatsapp(lead.id));
       acoes.append(wa);
     }
     const bEdit = el('button', 'pp-btn', '✏️ Editar lead');
@@ -595,10 +626,11 @@ function setView(view) {
   $('#tabPerdidos').classList.toggle('active', view === 'perdidos');
   $('#tabDesistiu').classList.toggle('active', view === 'desistiu');
   $('#tabMap').classList.toggle('active', view === 'map');
-  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos' || view === 'desistiu');
+  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos' || view === 'desistiu' || view === 'aguardando');
   $('#mapWrap').hidden = view !== 'map';
   $('#lostWrap').hidden = view !== 'perdidos';
   $('#desistiuWrap').hidden = view !== 'desistiu';
+  $('#aguardandoWrap').hidden = view !== 'aguardando';
   if (view === 'map') {
     ensureMap();
     // o container acabou de ficar visível; o Leaflet precisa remedir
@@ -607,6 +639,8 @@ function setView(view) {
     renderLost();
   } else if (view === 'desistiu') {
     renderDesistiu();
+  } else if (view === 'aguardando') {
+    renderAguardando();
   } else {
     renderBoard();
   }
@@ -655,6 +689,30 @@ function renderDesistiu() {
   });
 }
 
+// Lista única com as pendências de resposta de TODOS os funis (o card de stats
+// e o contador são globais). Mais urgentes (esperando há mais tempo) no topo.
+function renderAguardando() {
+  const leads = leadsCache.filter((l) => !!l.aguardando_resposta);
+  const head = $('#aguardandoHead');
+  head.innerHTML = '';
+  head.append(el('div', 'lost-count', `📱 ${leads.length} ${leads.length === 1 ? 'lead aguardando você registrar a resposta' : 'leads aguardando você registrar a resposta'}`));
+  head.append(el('div', 'lost-sub', 'Abra o card, escreva no histórico o que o cliente respondeu e o alerta some. Fica vermelho após 3h sem registro.'));
+
+  const grid = $('#aguardandoGrid');
+  grid.innerHTML = '';
+  if (!leads.length) {
+    grid.append(el('div', 'lost-empty', 'Tudo registrado — nenhuma resposta pendente. 🎉'));
+    return;
+  }
+  // mais antigo (esperando há mais tempo) primeiro = mais urgente
+  leads.sort((a, b) => (a.aguardando_resposta < b.aguardando_resposta ? -1 : 1));
+  for (const lead of leads) {
+    const card = renderCard(lead);
+    card.draggable = false; // aqui não se arrasta; abre para registrar a resposta
+    grid.append(card);
+  }
+}
+
 async function loadLeads() {
   const params = new URLSearchParams();
   if (currentFilters.q) params.set('q', currentFilters.q);
@@ -677,6 +735,7 @@ async function loadLeads() {
   primeiroLoadFeito = true;
   if (currentView === 'perdidos') renderLost();
   else if (currentView === 'desistiu') renderDesistiu();
+  else if (currentView === 'aguardando') renderAguardando();
   else { renderBoard(); if (currentView === 'map') renderMap(); }
   atualizaEstadoVazio();
 }
@@ -838,6 +897,14 @@ function renderCard(lead) {
     nome.append(b);
   }
   card.append(nome);
+  const ar = aguardaResposta(lead);
+  if (ar) {
+    const w = el('div', 'wait-reply ' + (ar.urgente ? 'urgente' : 'pendente'));
+    w.append(el('span', 'ic', ar.urgente ? '⏰' : '📱'), document.createTextNode(
+      ar.urgente ? `Resposta pendente há ${duracao(ar.ms)} — registre!`
+                 : `Registre o que o cliente respondeu · há ${duracao(ar.ms)}`));
+    card.append(w);
+  }
   if (lead.telefone) {
     const r = el('div', 'row');
     const href = waHref(lead.telefone);
@@ -846,7 +913,7 @@ function renderCard(lead) {
       a.className = 'wa-link'; a.href = href; a.target = '_blank'; a.rel = 'noopener';
       a.title = 'Abrir conversa no WhatsApp';
       a.append(el('span', 'ic', '💬'), document.createTextNode(lead.telefone));
-      a.addEventListener('click', (e) => e.stopPropagation()); // não abre a ficha
+      a.addEventListener('click', (e) => { e.stopPropagation(); registrarContatoWhatsapp(lead.id); }); // não abre a ficha; marca "aguardando resposta"
       r.append(a);
     } else {
       r.append(el('span', 'ic', '📱'), document.createTextNode(lead.telefone));
@@ -927,8 +994,10 @@ async function dropLead(id, lane, col, funil) {
   // a raia define quem é o dono neste funil (SDR ou vendedor)
   patch[funil.campo] = lane.isNone ? '' : lane.nome;
 
-  const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo };
+  const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo, aguardando_resposta: lead.aguardando_resposta };
   Object.assign(lead, patch);
+  // encerrar o lead tira o alerta na hora (o servidor faz o mesmo no PATCH)
+  if (['ganho', 'perdido', 'desistiu', 'curioso'].includes(lead.status)) lead.aguardando_resposta = null;
   renderBoard();
 
   try {
@@ -1320,7 +1389,11 @@ async function adicionarNota() {
       lead.historico = lead.historico || [];
       lead.historico.push(res.entrada);
       lead.updated_at = res.entrada.data;
+      // registrar a atualização tira o alerta de "resposta pendente"
+      if ('aguardando_resposta' in res) lead.aguardando_resposta = res.aguardando_resposta;
       renderHistorico(lead);
+      renderBoard();
+      loadStats();
     }
     toast('✅ Atualização adicionada');
   } catch (err) {
@@ -1972,6 +2045,9 @@ function atualizaWaLead() {
   if (href) a.href = href;
 }
 form.telefone.addEventListener('input', atualizaWaLead);
+// abrir o WhatsApp pela ficha aberta também marca "aguardando registrar a resposta"
+const waLeadEl = $('#waLead');
+if (waLeadEl) waLeadEl.addEventListener('click', () => registrarContatoWhatsapp(form.id.value));
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));
@@ -2022,6 +2098,12 @@ const PRODUTOS = ['T25P', 'T70P', 'T55', 'T100', 'Peças e Serviços'];
 function aplicaFiltro(key) {
   if (FILTER_DEFS[key].client) renderBoard(); else loadLeads();
   atualizaBotaoLimpar();
+}
+
+// Atalho do card de stats: abre a lista única de "aguardando registro" (junta as
+// pendências de TODOS os funis num lugar só — o contador é global).
+function ativarFiltroAguardando() {
+  setView('aguardando');
 }
 
 function renderChips() {
@@ -2119,6 +2201,7 @@ function limparFiltros() {
   if (recarrega) loadLeads();           // loadLeads já re-renderiza a aba atual (inclui Perdidos)
   else if (currentView === 'perdidos') renderLost();
   else if (currentView === 'desistiu') renderDesistiu();
+  else if (currentView === 'aguardando') renderAguardando();
   else renderBoard();
 }
 $('#btnLimparFiltros').addEventListener('click', limparFiltros);

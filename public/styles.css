@@ -72,6 +72,10 @@ body {
 }
 .stat .n { font-size: 15px; font-weight: 700; line-height: 1.15; white-space: nowrap; }
 .stat .l { font-size: 10px; opacity: 0.85; margin-top: 1px; white-space: nowrap; }
+.stat.clicavel { cursor: pointer; }
+.stat.wait { background: rgba(255, 209, 102, 0.28); border-color: rgba(255, 209, 102, 0.75); }
+.stat.wait:hover { background: rgba(255, 209, 102, 0.42); }
+.stat.wait .l { opacity: 1; }
 .actions { display: flex; gap: 6px; align-items: center; }
 .actions .btn { padding: 8px 12px; font-size: 13px; }
 .actions .btn.icon-only { padding: 8px 10px; }
@@ -239,6 +243,15 @@ body {
 .card-heat { margin-left: 5px; font-size: 13px; }
 .card-heat.quente { animation: heatBlink 1.6s infinite; }
 @keyframes heatBlink { 50% { opacity: 0.55; } }
+/* alerta "registre a resposta" (ao clicar no WhatsApp): amarelo e, com o tempo, vermelho */
+.card .wait-reply {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; line-height: 1.25;
+  margin: 4px 0 2px; padding: 3px 7px; border-radius: 7px;
+}
+.card .wait-reply .ic { flex-shrink: 0; }
+.card .wait-reply.pendente { background: #fff5d6; color: #8a6100; border: 1px solid #f2d888; }
+.card .wait-reply.urgente { background: #fde3e1; color: #b02a1f; border: 1px solid #f3b4ae; animation: heatBlink 1.6s infinite; }
 .map-popup .pp-nome { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
 .map-popup .pp-linha { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .map-popup .pp-acoes { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }

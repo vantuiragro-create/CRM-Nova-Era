@@ -263,6 +263,7 @@ def load_db():
                     l["visitas"] = []
                 if not isinstance(l.get("historico"), list):
                     l["historico"] = []
+                l.setdefault("aguardando_resposta", None)
             _db = data
     except Exception as e:
         # Arquivo ilegivel (queda de energia, edicao manual): NUNCA sobrescrever.
@@ -332,6 +333,8 @@ def make_lead(partial=None):
         "ganho_em": None,        # data em que o negocio foi GANHO (fixa; p/ relatorio)
         "perdido_em": None,      # data em que o negocio foi PERDIDO (fixa; p/ relatorio)
         "desistiu_em": None,     # data em que o cliente DESISTIU da compra (fixa)
+        "aguardando_resposta": None,  # ISO do contato por WhatsApp que ainda espera
+                                      # o vendedor REGISTRAR o que o cliente respondeu
         "created_at": now_iso(),  # data/hora de ENTRADA do lead
         "updated_at": now_iso(),
     }
@@ -550,6 +553,9 @@ def apply_updates(lead, updates):
         lead["perdido_em"] = now_iso()
     if lead.get("status") == "desistiu" and status_antes != "desistiu":
         lead["desistiu_em"] = now_iso()
+    # Lead encerrado nao deve mais cobrar "registre a resposta".
+    if lead.get("status") in ("ganho", "perdido", "desistiu", "curioso"):
+        lead["aguardando_resposta"] = None
 
     # Nota fiscal exige contato completo: barra a MUDANCA para essas etapas
     if updates.get("status") in STAGES_EXIGEM_CONTATO and (
@@ -1604,6 +1610,7 @@ class Handler(BaseHTTPRequestHandler):
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
                 pecuaristas = sum(1 for l in visiveis if l.get("tipo") == "pecuarista")
+                aguardando = sum(1 for l in visiveis if l.get("aguardando_resposta"))
                 # cidades presentes nos leads visiveis (para o filtro de cidade)
                 cidades = sorted({str(l.get("regiao") or "").strip()
                                   for l in visiveis if str(l.get("regiao") or "").strip()})
@@ -1613,6 +1620,7 @@ class Handler(BaseHTTPRequestHandler):
                     "produtores": produtores,
                     "prestadores": prestadores,
                     "pecuaristas": pecuaristas,
+                    "aguardando_resposta": aguardando,
                     "cidades": cidades,
                     "mesorregioes": MESORREGIOES,
                     "por_status": por_status,
@@ -2099,9 +2107,40 @@ class Handler(BaseHTTPRequestHandler):
                 if not lead or not pode_ver_lead(user, lead):
                     return self.send_json(404, {"error": "Lead nao encontrado"})
                 registra_hist(lead, user["nome"], ["💬 " + texto], papel=user["papel"], tipo="nota")
+                # A atualizacao escrita E o registro da resposta: some o alerta.
+                lead["aguardando_resposta"] = None
                 lead["updated_at"] = now_iso()
                 save_db()
-                return self.send_json(201, {"entrada": lead["historico"][-1]})
+                return self.send_json(201, {"entrada": lead["historico"][-1],
+                                            "aguardando_resposta": lead["aguardando_resposta"]})
+
+        # Contato por WhatsApp: marca "aguardando o vendedor registrar a resposta"
+        # e anota no historico. O alerta some quando alguem escreve uma nota.
+        mc = re.match(r"^/api/leads/([^/]+)/contato-whatsapp$", path)
+        if mc and method == "POST":
+            lead_id = mc.group(1)
+            with _lock:
+                lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                if not lead or not pode_ver_lead(user, lead):
+                    return self.send_json(404, {"error": "Lead nao encontrado"})
+                # Lead encerrado nao gera cobranca de registro.
+                if lead.get("status") in ("ganho", "perdido", "desistiu", "curioso"):
+                    return self.send_json(200, {"lead": lead})
+                ja_pendente = bool(lead.get("aguardando_resposta"))
+                ultimo = lead["historico"][-1] if lead.get("historico") else None
+                # Anota o contato — menos em cliques repetidos (ja aguardando E a
+                # ultima entrada ja foi um contato), para nao poluir o historico.
+                if not (ja_pendente and ultimo and ultimo.get("tipo") == "contato"):
+                    registra_hist(lead, user["nome"], ["📱 Contato por WhatsApp"],
+                                  papel=user["papel"], tipo="contato")
+                    lead["updated_at"] = now_iso()
+                # So carimba o horario no PRIMEIRO contato sem resposta registrada:
+                # reabrir a conversa nao pode zerar o cronometro (senao nunca fica
+                # vermelho). O relogio conta desde o contato que ainda espera nota.
+                if not ja_pendente:
+                    lead["aguardando_resposta"] = now_iso()
+                save_db()
+                return self.send_json(200, {"lead": lead})
 
         # Criar
         if path == "/api/leads" and method == "POST":
