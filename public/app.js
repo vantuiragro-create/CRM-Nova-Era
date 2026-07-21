@@ -12,9 +12,10 @@ const STAGE_LABELS = {
   ganho: 'Fechado (ganho)',
   desistiu: 'Desistiu da compra',
   perdido: 'Perdido p/ concorrente',
+  curioso: 'Só curioso — sem perspectiva (SDR)',
 };
 let STAGES = ['novo', 'triagem', 'qualificado', 'decidindo', 'negociacao', 'proposta',
-  'financiamento', 'ganho', 'desistiu', 'perdido'];
+  'financiamento', 'ganho', 'desistiu', 'perdido', 'curioso'];
 
 // Cada coluna carrega o "patch" que o arraste aplica e um "match" que decide
 // quais leads ficam nela. Colunas de qualificação (q_prod/q_prest) não guardam
@@ -24,6 +25,7 @@ const COL = {
   triagem: { key: 'triagem', label: 'Em triagem', patch: { status: 'triagem' }, match: (l) => l.status === 'triagem' },
   q_prod: { key: 'q_prod', label: '🌾 → Produtores', patch: { status: 'qualificado', tipo: 'produtor' }, match: () => false, envia: 'Produtores' },
   q_prest: { key: 'q_prest', label: '🔧 → Prestadores', patch: { status: 'qualificado', tipo: 'prestador' }, match: () => false, envia: 'Prestadores' },
+  curioso: { key: 'curioso', label: '🧐 Só curioso', patch: { status: 'curioso', tipo: '' }, match: (l) => l.status === 'curioso' },
   perd_sdr: { key: 'perd_sdr', label: 'Perdido na triagem', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' && !l.tipo },
   recebido: { key: 'recebido', label: '📥 Recebido do SDR', patch: { status: 'qualificado' }, match: (l) => l.status === 'qualificado' },
   decidindo: { key: 'decidindo', label: '🤔 Decidindo', patch: { status: 'decidindo' }, match: (l) => l.status === 'decidindo' },
@@ -40,8 +42,8 @@ const COL = {
 const FUNIS = {
   sdr: {
     papel: 'sdr', campo: 'sdr',
-    colunas: [COL.novo, COL.triagem, COL.q_prod, COL.q_prest, COL.perd_sdr],
-    inclui: (l) => ['novo', 'triagem'].includes(l.status || 'novo') || (l.status === 'perdido' && !l.tipo),
+    colunas: [COL.novo, COL.triagem, COL.q_prod, COL.q_prest, COL.curioso, COL.perd_sdr],
+    inclui: (l) => ['novo', 'triagem'].includes(l.status || 'novo') || l.status === 'curioso' || (l.status === 'perdido' && !l.tipo),
   },
   produtor: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
@@ -224,7 +226,7 @@ const VIEW_LABEL = {
   perdidos: 'Perdido p/ concorrente', desistiu: 'Desistiu', map: 'Mapa',
 };
 // resultados terminais que a ação em massa nunca deve alterar
-const STATUS_ENCERRADOS = ['ganho', 'perdido', 'desistiu'];
+const STATUS_ENCERRADOS = ['ganho', 'perdido', 'desistiu', 'curioso'];
 function alvosMassa() {
   return leadsDaVisao().filter((l) => !STATUS_ENCERRADOS.includes(l.status));
 }
@@ -474,9 +476,11 @@ function pinClass(lead, exato) {
   if (lead.status === 'ganho') return 'won';
   if (lead.status === 'perdido') return 'lost';
   if (lead.status === 'desistiu') return 'gaveup';
+  if (lead.status === 'curioso') return 'curioso';
   return exato ? 'exato' : 'aprox';
 }
 function pinFlag(lead) {
+  if (lead.status === 'curioso') return '<span class="pin-flag">🧐</span>';
   if (lead.status === 'desistiu') return '<span class="pin-flag">🚫</span>';
   if (lead.status === 'ganho') return '<span class="pin-flag">🟢</span>';
   if (lead.status === 'perdido') return '<span class="pin-flag">🔴</span>';
@@ -515,6 +519,7 @@ function renderMap() {
     if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢 '));
     else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴 '));
     else if (lead.status === 'desistiu') nome.append(el('span', 'flag', '🚫 '));
+    else if (lead.status === 'curioso') nome.append(el('span', 'flag', '🧐 '));
     nome.append(document.createTextNode(lead.nome || '(sem nome)'));
     pop.append(nome);
     if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · local aproximado')));
@@ -808,12 +813,13 @@ function renderCell(lane, col, cellLeads, funil) {
 }
 
 function renderCard(lead) {
-  const card = el('div', 'card' + (lead.status === 'ganho' ? ' won' : lead.status === 'perdido' ? ' lost' : lead.status === 'desistiu' ? ' gaveup' : ''));
+  const card = el('div', 'card' + (lead.status === 'ganho' ? ' won' : lead.status === 'perdido' ? ' lost' : lead.status === 'desistiu' ? ' gaveup' : lead.status === 'curioso' ? ' curioso' : ''));
   card.draggable = true;
   card.dataset.id = lead.id;
 
   const nome = el('div', 'name');
   if (lead.status === 'ganho') nome.append(el('span', 'flag', '🟢'));
+  else if (lead.status === 'curioso') nome.append(el('span', 'flag', '🧐'));
   else if (lead.status === 'perdido') nome.append(el('span', 'flag', '🔴'));
   else if (lead.status === 'desistiu') nome.append(el('span', 'flag', '🚫'));
   nome.append(document.createTextNode(lead.nome || '(sem nome)'));

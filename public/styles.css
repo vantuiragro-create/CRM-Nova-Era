@@ -216,6 +216,7 @@ body {
 .lead-pin.won { background: var(--green-600); }
 .lead-pin.lost { background: var(--danger); }
 .lead-pin.gaveup { background: #718096; }
+.lead-pin.curioso { background: #a9885c; }
 /* aguardando o banco: anel azul (perde p/ "movendo" e p/ o calor, logo abaixo) */
 .lead-pin.aguardando { box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 3px rgba(43,108,176,0.45); }
 .lead-pin.movendo { box-shadow: 0 0 0 4px rgba(112, 212, 75, 0.6); animation: pulse 1s infinite; }
@@ -318,6 +319,7 @@ body {
 .st-q_prod .dot { background: var(--green-500); }
 .st-q_prest .dot { background: #2f855a; }
 .st-perd_sdr .dot { background: var(--danger); }
+.st-curioso .dot { background: #a9885c; }
 .st-recebido .dot { background: var(--green-500); }
 .st-decidindo .dot { background: #b8860b; }
 .st-negociacao .dot { background: var(--purple); }
@@ -384,6 +386,7 @@ body {
 .col-h.st-ganho { background: #eafaf0; }
 .col-h.st-perdido, .col-h.st-perd_sdr { background: #fdece9; }
 .col-h.st-desistiu { background: #eef1f5; }
+.col-h.st-curioso { background: #f6f1ea; }
 
 /* ---------- Card ---------- */
 .card {
@@ -397,6 +400,7 @@ body {
 .card.won { border-left: 4px solid var(--green-600); }
 .card.lost { border-left: 4px solid var(--danger); }
 .card.gaveup { border-left: 4px solid #718096; }
+.card.curioso { border-left: 4px solid #a9885c; }
 .card .name { font-weight: 700; font-size: 13px; margin-bottom: 2px; line-height: 1.25; }
 .card .name .flag { font-size: 11px; margin-right: 3px; }
 .card .row { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; margin-top: 2px; }

@@ -58,7 +58,7 @@ RESULTADOS_VISITA = (
 #                            prestador; cada tipo tem sua aba)
 #   perdido               -> venda/lead que nao avancou (guardado p/ resgate)
 STAGES = ["novo", "triagem", "qualificado", "decidindo", "negociacao", "proposta",
-          "financiamento", "ganho", "desistiu", "perdido"]
+          "financiamento", "ganho", "desistiu", "perdido", "curioso"]
 
 # Etapas do funil de vendas (ja qualificado). "decidindo" = cliente avaliando se
 # vai adquirir o drone (antes de negociar); "financiamento" = proposta aceita,
@@ -412,6 +412,7 @@ STATUS_LABEL = {
     "decidindo": "Decidindo", "negociacao": "Em negociação", "proposta": "Proposta enviada",
     "financiamento": "Aguardando financiamento",
     "ganho": "Fechado (ganho)", "desistiu": "Desistiu da compra", "perdido": "Perdido p/ concorrente",
+    "curioso": "Só curioso (sem perspectiva)",
 }
 HIST_LABEL = {
     "status": "Etapa", "vendedor": "Vendedor", "sdr": "SDR", "tipo": "Classificação",
@@ -526,6 +527,12 @@ def apply_updates(lead, updates):
             continue
         lead[key] = value
 
+    # "Curioso" e um lead de nivel SDR (sem perspectiva de compra): sai do funil
+    # de vendas, entao zera o tipo/qualificacao por QUALQUER caminho (arraste,
+    # seletor de etapa do modal ou PATCH) — senao ficaria contado como produtor.
+    if lead.get("status") == "curioso":
+        lead["tipo"] = ""
+        lead["qualificado_em"] = None
     # Consistencia: entrar no funil de vendas sem tipo assume "produtor";
     # ao ganhar o tipo pela primeira vez, marca a data de qualificacao.
     if lead.get("status") in SALES_STAGES and not lead.get("tipo"):
@@ -1213,13 +1220,13 @@ def handle_chatwoot_event(payload):
                 or (email_n and str(l.get("email") or "").strip().lower() == email_n))]
             if candidatos:
                 # prefere um lead em atendimento; so cai num encerrado se nao houver
-                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido", "desistiu")]
+                ativos = [l for l in candidatos if l.get("status") not in ("ganho", "perdido", "desistiu", "curioso")]
                 lead = (ativos or candidatos)[0]
                 if conversation_id is not None:
                     lead["chatwoot_conversation_id"] = conversation_id
-                # cliente que estava dado como perdido/desistiu voltou:
+                # cliente que estava dado como perdido/desistiu/curioso voltou:
                 # reentra na triagem para a equipe enxergar
-                if lead.get("status") in ("perdido", "desistiu"):
+                if lead.get("status") in ("perdido", "desistiu", "curioso"):
                     lead["status"] = "novo"
                     lead["tipo"] = ""  # volta para a triagem do SDR
                     registra_hist(lead, "Chatwoot", ["🔄 Cliente voltou pelo Chatwoot — reaberto na triagem"])
@@ -1592,7 +1599,7 @@ class Handler(BaseHTTPRequestHandler):
                     s = l.get("status") if l.get("status") in STAGES else "novo"
                     por_status[s]["count"] += 1
                     por_status[s]["valor"] += float(l.get("valor") or 0)
-                    if l.get("status") not in ("perdido", "desistiu"):
+                    if l.get("status") not in ("perdido", "desistiu", "curioso"):
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
@@ -1729,7 +1736,7 @@ class Handler(BaseHTTPRequestHandler):
                     if l.get("status") == "ganho":
                         row["ganhos"] += 1
                         row["valor_ganho"] += valor
-                    elif l.get("status") not in ("perdido", "desistiu"):
+                    elif l.get("status") not in ("perdido", "desistiu", "curioso"):
                         row["valor_aberto"] += valor
                 out = sorted(rows.values(), key=lambda r: r["leads"], reverse=True)
                 if sem["leads"]:
@@ -1944,9 +1951,9 @@ class Handler(BaseHTTPRequestHandler):
                 for lead in _db["leads"]:
                     if lead["id"] not in alvo or not pode_ver_lead(user, lead):
                         continue
-                    # Negocio ja encerrado (ganho/perdido/desistiu) NAO e tocado:
-                    # reatribuir o dono de um caso encerrado bagunca historico.
-                    if lead.get("status") in ("ganho", "perdido", "desistiu"):
+                    # Caso ja encerrado/arquivado (ganho/perdido/desistiu/curioso)
+                    # NAO e tocado pela acao em massa.
+                    if lead.get("status") in ("ganho", "perdido", "desistiu", "curioso"):
                         fechados += 1
                         continue
                     u = dict(updates)
