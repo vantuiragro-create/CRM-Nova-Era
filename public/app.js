@@ -1902,6 +1902,7 @@ document.addEventListener('keydown', (e) => {
   if (!$('#bulkBackdrop').hidden) $('#bulkBackdrop').hidden = true;
   if (!$('#reportBackdrop').hidden) $('#reportBackdrop').hidden = true;
   if (!$('#visitBackdrop').hidden) $('#visitBackdrop').hidden = true;
+  if (!$('#teamActBackdrop').hidden) $('#teamActBackdrop').hidden = true;
 });
 
 $('#tabSDR').addEventListener('click', () => setView('sdr'));
@@ -2074,8 +2075,79 @@ function toastOnce(msg) { if (_toastedOnce) return; _toastedOnce = true; toast(m
 // Atualização automática a cada 15s (pega leads novos do webhook).
 // Só pausa durante a edição de um lead; com o painel de Campanhas aberto o
 // quadro e o relatório continuam vivos (o formulário do painel não é tocado).
+// ---------------------------------------------------------------------------
+// Painel do gestor: quem está online + últimas movimentações da equipe
+// ---------------------------------------------------------------------------
+function openTeamActivity() {
+  $('#onlineList').innerHTML = '';
+  $('#atividadeList').innerHTML = el('div', 'ta-empty', 'Carregando…').outerHTML;
+  $('#teamActBackdrop').hidden = false;
+  carregarTeamActivity();
+}
+
+async function carregarTeamActivity() {
+  try {
+    const [on, at] = await Promise.all([api('/api/online'), api('/api/atividades?limite=80')]);
+    renderOnline(on.usuarios || []);
+    renderAtividades(at.atividades || []);
+  } catch (err) { /* transitório: mantém o que já está na tela */ }
+}
+
+function renderOnline(usuarios) {
+  const box = $('#onlineList');
+  box.innerHTML = '';
+  if (!usuarios.length) { box.append(el('div', 'ta-empty', 'Nenhum membro cadastrado.')); return; }
+  const nOn = usuarios.filter((u) => u.online).length;
+  if (!nOn) box.append(el('div', 'ta-empty', 'Ninguém online agora.'));
+  for (const u of usuarios) {
+    const c = el('div', 'online-chip' + (u.online ? ' on' : ''));
+    c.append(el('span', 'dot'));
+    c.append(el('span', 'nome', u.nome));
+    c.append(el('span', 'papel', papelLabel(u.papel)));
+    const quando = u.online ? 'online' : (u.segundos == null ? 'nunca entrou' : 'visto há ' + duracao(u.segundos * 1000));
+    c.append(el('span', 'quando', quando));
+    box.append(c);
+  }
+}
+
+function renderAtividades(lista) {
+  const box = $('#atividadeList');
+  const st = box.scrollTop; // preserva a rolagem no refresh automático
+  box.innerHTML = '';
+  if (!lista.length) { box.append(el('div', 'ta-empty', 'Sem movimentações ainda.')); return; }
+  for (const a of lista) {
+    const row = el('div', 'atv' + (a.tipo === 'nota' ? ' nota' : ''));
+    const top = el('div', 'atv-top');
+    const cargo = a.papel ? papelLabel(a.papel) : '';
+    top.append(el('span', 'atv-who', '👤 ' + (a.autor || 'Sistema') + (cargo && cargo !== a.autor ? ' · ' + cargo : '')));
+    top.append(el('span', 'atv-when', dataHora(a.data, true)));
+    row.append(top);
+    for (const it of (a.itens || [])) row.append(el('div', 'atv-item', it));
+    const lk = el('button', 'atv-lead', '📇 ' + (a.lead_nome || 'cliente'));
+    lk.type = 'button';
+    lk.onclick = () => {
+      const lead = leadsCache.find((l) => l.id === a.lead_id);
+      if (lead) { $('#teamActBackdrop').hidden = true; openModal(lead); }
+      else toast('Abra o cliente pelo funil — ele não está na lista carregada agora.');
+    };
+    row.append(lk);
+    box.append(row);
+  }
+  box.scrollTop = st; // restaura a rolagem
+}
+
+$('#btnTeamActivity').addEventListener('click', openTeamActivity);
+$('#teamActClose').addEventListener('click', () => { $('#teamActBackdrop').hidden = true; });
+$('#teamActBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#teamActBackdrop')) $('#teamActBackdrop').hidden = true;
+});
+
 setInterval(async () => {
   if (!me) return; // ainda sem login
+  // heartbeat: mantém a presença "online" viva mesmo com um modal aberto
+  api('/api/heartbeat').catch(() => {});
+  // painel de equipe aberto → atualiza online + atividade ao vivo
+  if (!$('#teamActBackdrop').hidden) { carregarTeamActivity(); return; }
   if (!$('#modalBackdrop').hidden) return;
   // com a janela de ação em massa aberta, a lista não pode mudar embaixo do
   // usuário: o que ele confirmou tem que ser o que será alterado
@@ -2091,6 +2163,7 @@ function applyRoleUI() {
   const gestor = me.papel === 'admin' || me.papel === 'gerente';
   $('#userChip').textContent = `👤 ${me.nome} · ${PAPEL_LABEL[me.papel] || me.papel}`;
   $('#btnManage').hidden = !gestor;   // menu "Gerenciar" só para gestor/admin
+  $('#btnTeamActivity').hidden = !gestor;
   $('#btnBulk').hidden = !gestor;
   $('#btnImport').hidden = !gestor;
   $('#btnReport').hidden = !gestor;

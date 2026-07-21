@@ -31,6 +31,7 @@
       <div class="manage-wrap">
         <button class="btn ghost" id="btnManage" title="Ferramentas de gestão" hidden>⚙️ Gerenciar ▾</button>
         <div class="manage-menu" id="manageMenu" hidden>
+          <button class="btn ghost" id="btnTeamActivity" title="Quem está online e o que a equipe fez" hidden>👀 Equipe online</button>
           <button class="btn ghost" id="btnBulk" title="Alterar vários clientes de uma vez" hidden>⚡ Alterar em massa</button>
           <button class="btn ghost" id="btnImport" title="Importar leads em massa" hidden>⬆️ Importar planilha</button>
           <button class="btn ghost" id="btnReport" title="Relatório diário" hidden>📊 Relatório</button>
@@ -315,6 +316,22 @@
         </div>
         <div id="reportTotals" class="report-totals"></div>
         <div id="reportBody" class="camp-report"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Painel do gestor: quem está online + últimas movimentações da equipe -->
+  <div class="modal-backdrop" id="teamActBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>👀 Equipe — online e atividade</h2>
+        <button class="icon-btn" id="teamActClose" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="ta-sec-title">🟢 Online agora</div>
+        <div id="onlineList" class="online-list"></div>
+        <div class="ta-sec-title">🕒 Últimas movimentações</div>
+        <div id="atividadeList" class="atividade-list"></div>
       </div>
     </div>
   </div>

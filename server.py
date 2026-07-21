@@ -12,6 +12,7 @@ Webhook do Chatwoot: http://localhost:3000/webhook/chatwoot?token=SEU_TOKEN
 """
 
 import csv
+import heapq
 import io
 import json
 import math
@@ -144,6 +145,10 @@ MIME = {
 # Camada de dados (JSON em arquivo + lock para acesso concorrente)
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
+# presenca "online": user_id -> ultima vez visto (ISO). So em memoria (efemero,
+# nao vai pro disco); atualizado a cada requisicao autenticada.
+_online = {}
+ONLINE_LIMIAR_S = 100  # visto nos ultimos N segundos = online
 # users: pessoas com login (a equipe: admin/gerente/vendedor/sdr)
 # rr_sdr: indice do rodizio de SDRs | campaigns: campanhas | settings: config
 # sessions: sessoes de login ativas (token -> user_id/validade)
@@ -1396,12 +1401,65 @@ class Handler(BaseHTTPRequestHandler):
         # ---- Daqui em diante, toda rota exige sessao valida ----
         with _lock:
             user = usuario_da_sessao(self._cookie("sessao"))
+            if user is not None:
+                _online[user["id"]] = now_iso()  # marca presenca (qualquer requisicao)
         if user is None:
             return self.send_json(401, {"error": "Sessão expirada — faça login novamente"})
         gestor = user["papel"] in ("admin", "gerente")
 
         if path == "/api/me" and method == "GET":
             return self.send_json(200, {"user": user_publico(user)})
+
+        # ---- Heartbeat: mantem a presenca viva mesmo com um modal aberto ----
+        if path == "/api/heartbeat" and method == "GET":
+            return self.send_json(200, {"ok": True})
+
+        # ---- Quem esta online + ultimas movimentacoes (so gestor) ----
+        if path == "/api/online" and method == "GET":
+            if not gestor:
+                return self.send_json(403, {"error": "Disponível só para gerente/administrador"})
+            agora = datetime.now(timezone.utc)
+            out = []
+            with _lock:
+                usuarios = [u for u in _db["users"] if u.get("ativo", True)]
+                for u in usuarios:
+                    ls = _online.get(u["id"])
+                    seg = None
+                    if ls:
+                        try:
+                            seg = int((agora - datetime.fromisoformat(ls)).total_seconds())
+                        except (ValueError, TypeError):
+                            seg = None
+                    out.append({
+                        "nome": u["nome"], "papel": u["papel"],
+                        "online": seg is not None and seg <= ONLINE_LIMIAR_S,
+                        "segundos": seg,
+                    })
+            out.sort(key=lambda x: (not x["online"], x["segundos"] if x["segundos"] is not None else 10 ** 12))
+            return self.send_json(200, {"usuarios": out, "limiar": ONLINE_LIMIAR_S})
+
+        if path == "/api/atividades" and method == "GET":
+            if not gestor:
+                return self.send_json(403, {"error": "Disponível só para gerente/administrador"})
+            try:
+                limite = min(int((qs.get("limite") or ["60"])[0]), 200)
+            except ValueError:
+                limite = 60
+            # Segura o _lock (global) o MINIMO possivel: so coleta tuplas leves das
+            # ultimas 'limite' entradas de CADA lead (as unicas que poderiam entrar
+            # no top-N global). A ordenacao/montagem pesada fica FORA do lock.
+            parciais = []
+            with _lock:
+                for l in _db["leads"]:
+                    nome = l.get("nome") or "(sem nome)"
+                    lid = l.get("id")
+                    for h in (l.get("historico") or [])[-limite:]:
+                        parciais.append((h.get("data") or "", h.get("autor"), h.get("papel"),
+                                         h.get("tipo"), list(h.get("itens") or []), lid, nome))
+            top = heapq.nlargest(limite, parciais, key=lambda t: t[0])
+            ev = [{"data": t[0], "autor": t[1], "papel": t[2], "tipo": t[3],
+                   "itens": t[4], "lead_id": t[5], "lead_nome": t[6]} for t in top]
+            return self.send_json(200, {"atividades": ev})
 
         # ---- Foto de visita (serve o arquivo; exige sessao) ----
         mf = re.match(r"^/api/foto/([A-Za-z0-9_.-]+)$", path)
