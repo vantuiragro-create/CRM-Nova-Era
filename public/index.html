@@ -49,6 +49,7 @@
     <div class="view-tabs" role="tablist">
       <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
       <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
+      <button class="view-tab" id="tabPecuarista" role="tab">🐄 Pecuaristas</button>
       <button class="view-tab" id="tabPrestador" role="tab">🔧 Prestadores</button>
       <button class="view-tab" id="tabPerdidos" role="tab">🚩 P/ concorrente</button>
       <button class="view-tab" id="tabDesistiu" role="tab">🚫 Desistiu</button>
@@ -121,6 +122,7 @@
           <div class="seg">
             <label class="seg-opt"><input type="radio" name="tipo" value="" /> <span>—</span></label>
             <label class="seg-opt produtor"><input type="radio" name="tipo" value="produtor" /> <span>🌾 Produtor rural</span></label>
+            <label class="seg-opt pecuarista"><input type="radio" name="tipo" value="pecuarista" /> <span>🐄 Pecuarista</span></label>
             <label class="seg-opt prestador"><input type="radio" name="tipo" value="prestador" /> <span>🔧 Prestador de serviço</span></label>
           </div>
         </div>
@@ -355,6 +357,7 @@
           <select id="bulkTipo">
             <option value="">— manter como está —</option>
             <option value="produtor">🌾 Produtor rural</option>
+            <option value="pecuarista">🐄 Pecuarista</option>
             <option value="prestador">🔧 Prestador de serviço</option>
           </select>
         </label>

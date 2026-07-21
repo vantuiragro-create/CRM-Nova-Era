@@ -522,6 +522,7 @@ body {
 }
 .seg-opt input { margin: 0; }
 .seg-opt.produtor:has(input:checked) { border-color: var(--green-500); background: #eafaf0; }
+.seg-opt.pecuarista:has(input:checked) { border-color: #a1662f; background: #f6efe6; }
 .seg-opt.prestador:has(input:checked) { border-color: var(--amber); background: #fdf6e8; }
 
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }

@@ -487,7 +487,7 @@ def apply_updates(lead, updates):
             continue
         if key == "status" and value not in STAGES:
             continue
-        if key == "tipo" and value not in ("", "produtor", "prestador"):
+        if key == "tipo" and value not in ("", "produtor", "prestador", "pecuarista"):
             continue
         if key in ("telefone", "email") and not str(value or "").strip() and str(lead.get(key) or "").strip():
             campo = "Telefone" if key == "telefone" else "E-mail"
@@ -760,7 +760,7 @@ def importar_csv(texto):
             st = dados.get("status", "").lower()
             lead["status"] = st if st in STAGES else "novo"
             tp = dados.get("tipo", "").lower()
-            if tp in ("produtor", "prestador"):
+            if tp in ("produtor", "prestador", "pecuarista"):
                 lead["tipo"] = tp
             elif lead["status"] in SALES_STAGES:
                 lead["tipo"] = "produtor"
@@ -1603,6 +1603,7 @@ class Handler(BaseHTTPRequestHandler):
                         total_valor += float(l.get("valor") or 0)
                 produtores = sum(1 for l in visiveis if l.get("tipo") == "produtor")
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
+                pecuaristas = sum(1 for l in visiveis if l.get("tipo") == "pecuarista")
                 # cidades presentes nos leads visiveis (para o filtro de cidade)
                 cidades = sorted({str(l.get("regiao") or "").strip()
                                   for l in visiveis if str(l.get("regiao") or "").strip()})
@@ -1611,6 +1612,7 @@ class Handler(BaseHTTPRequestHandler):
                     "valor_pipeline": total_valor,
                     "produtores": produtores,
                     "prestadores": prestadores,
+                    "pecuaristas": pecuaristas,
                     "cidades": cidades,
                     "mesorregioes": MESORREGIOES,
                     "por_status": por_status,
@@ -1757,7 +1759,7 @@ class Handler(BaseHTTPRequestHandler):
                 def bucket(d):
                     return por_dia.setdefault(d, {
                         "dia": d, "recebidos": 0, "recebidos_chatwoot": 0,
-                        "qualificados": 0, "produtores": 0, "prestadores": 0,
+                        "qualificados": 0, "produtores": 0, "prestadores": 0, "pecuaristas": 0,
                         "ganhos": 0, "perdidos": 0, "desistidos": 0})
 
                 for l in _db["leads"]:
@@ -1775,6 +1777,8 @@ class Handler(BaseHTTPRequestHandler):
                             b["produtores"] += 1
                         elif l.get("tipo") == "prestador":
                             b["prestadores"] += 1
+                        elif l.get("tipo") == "pecuarista":
+                            b["pecuaristas"] += 1
                     if l.get("status") == "ganho":
                         dg = dia_brt(l.get("ganho_em") or l.get("updated_at"))
                         if dg:
@@ -1939,7 +1943,7 @@ class Handler(BaseHTTPRequestHandler):
             vend = str(body.get("vendedor") or "").strip()
             if vend:
                 updates["vendedor"] = vend
-            if body.get("tipo") in ("produtor", "prestador"):
+            if body.get("tipo") in ("produtor", "prestador", "pecuarista"):
                 updates["tipo"] = body["tipo"]
             if body.get("qualificar"):
                 updates["status"] = "qualificado"

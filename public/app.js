@@ -24,6 +24,7 @@ const COL = {
   novo: { key: 'novo', label: 'Novo lead', patch: { status: 'novo' }, match: (l) => (l.status || 'novo') === 'novo' },
   triagem: { key: 'triagem', label: 'Em triagem', patch: { status: 'triagem' }, match: (l) => l.status === 'triagem' },
   q_prod: { key: 'q_prod', label: '🌾 → Produtores', patch: { status: 'qualificado', tipo: 'produtor' }, match: () => false, envia: 'Produtores' },
+  q_pec: { key: 'q_pec', label: '🐄 → Pecuaristas', patch: { status: 'qualificado', tipo: 'pecuarista' }, match: () => false, envia: 'Pecuaristas' },
   q_prest: { key: 'q_prest', label: '🔧 → Prestadores', patch: { status: 'qualificado', tipo: 'prestador' }, match: () => false, envia: 'Prestadores' },
   curioso: { key: 'curioso', label: '🧐 Só curioso', patch: { status: 'curioso', tipo: '' }, match: (l) => l.status === 'curioso' },
   perd_sdr: { key: 'perd_sdr', label: 'Perdido na triagem', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' && !l.tipo },
@@ -37,18 +38,23 @@ const COL = {
   perdido: { key: 'perdido', label: '🚩 Perdido p/ concorrente', patch: { status: 'perdido' }, match: (l) => l.status === 'perdido' },
 };
 
-// Três funis, cada um numa aba. Produtores e Prestadores são iguais em etapas,
-// mas separados pelo "tipo".
+// Funis de venda, cada um numa aba. Produtores/Pecuaristas/Prestadores são
+// iguais em etapas, mas separados pelo "tipo".
 const FUNIS = {
   sdr: {
     papel: 'sdr', campo: 'sdr',
-    colunas: [COL.novo, COL.triagem, COL.q_prod, COL.q_prest, COL.curioso, COL.perd_sdr],
+    colunas: [COL.novo, COL.triagem, COL.q_prod, COL.q_pec, COL.q_prest, COL.curioso, COL.perd_sdr],
     inclui: (l) => ['novo', 'triagem'].includes(l.status || 'novo') || l.status === 'curioso' || (l.status === 'perdido' && !l.tipo),
   },
   produtor: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'produtor',
     colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.desistiu, COL.perdido],
     inclui: (l) => l.tipo === 'produtor' && (SALES.includes(l.status) || l.status === 'desistiu' || l.status === 'perdido'),
+  },
+  pecuarista: {
+    papel: 'vendedor', campo: 'vendedor', tipo: 'pecuarista',
+    colunas: [COL.recebido, COL.decidindo, COL.negociacao, COL.proposta, COL.financiamento, COL.ganho, COL.desistiu, COL.perdido],
+    inclui: (l) => l.tipo === 'pecuarista' && (SALES.includes(l.status) || l.status === 'desistiu' || l.status === 'perdido'),
   },
   prestador: {
     papel: 'vendedor', campo: 'vendedor', tipo: 'prestador',
@@ -179,6 +185,7 @@ async function loadStats() {
     const cards = [
       { n: s.total, l: 'Leads' },
       { n: s.produtores || 0, l: '🌾 Produtores' },
+      { n: s.pecuaristas || 0, l: '🐄 Pecuaristas' },
       { n: s.prestadores || 0, l: '🔧 Prestadores' },
       { n: (s.por_status.ganho || {}).count || 0, l: '🏆 Ganhos' },
       { n: brl(s.valor_pipeline), l: '💰 Pipeline' },
@@ -222,7 +229,7 @@ function leadsDaVisao() {
 }
 function leadsNaVisao() { return leadsDaVisao().length; }
 const VIEW_LABEL = {
-  sdr: 'Funil SDR', produtor: 'Produtores', prestador: 'Prestadores',
+  sdr: 'Funil SDR', produtor: 'Produtores', pecuarista: 'Pecuaristas', prestador: 'Prestadores',
   perdidos: 'Perdido p/ concorrente', desistiu: 'Desistiu', map: 'Mapa',
 };
 // resultados terminais que a ação em massa nunca deve alterar
@@ -583,6 +590,7 @@ function setView(view) {
   currentView = view;
   $('#tabSDR').classList.toggle('active', view === 'sdr');
   $('#tabProdutor').classList.toggle('active', view === 'produtor');
+  $('#tabPecuarista').classList.toggle('active', view === 'pecuarista');
   $('#tabPrestador').classList.toggle('active', view === 'prestador');
   $('#tabPerdidos').classList.toggle('active', view === 'perdidos');
   $('#tabDesistiu').classList.toggle('active', view === 'desistiu');
@@ -1651,13 +1659,13 @@ async function renderReport() {
     const table = document.createElement('table');
     table.innerHTML = '<thead><tr><th>Dia</th>' +
       '<th class="num">Recebidos</th><th class="num">Chatwoot</th>' +
-      '<th class="num">Qualificados</th><th class="num">🌾 Prod.</th><th class="num">🔧 Prest.</th>' +
+      '<th class="num">Qualificados</th><th class="num">🌾 Prod.</th><th class="num">🐄 Pec.</th><th class="num">🔧 Prest.</th>' +
       '<th class="num">Ganhos</th><th class="num">Concorrente</th><th class="num">Desistiu</th></tr></thead>';
     const tb = document.createElement('tbody');
     for (const r of reportCache) {
       const tr = document.createElement('tr');
       const cells = [fmtDia(r.dia), r.recebidos, r.recebidos_chatwoot, r.qualificados,
-        r.produtores, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0];
+        r.produtores, r.pecuaristas || 0, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0];
       cells.forEach((v, i) => {
         const td = document.createElement('td');
         if (i >= 1) td.className = 'num';
@@ -1677,9 +1685,9 @@ async function renderReport() {
 
 function baixarReportCsv() {
   if (!reportCache.length) { toast('Nada para exportar'); return; }
-  const head = 'dia;recebidos;recebidos_chatwoot;qualificados;produtores;prestadores;ganhos;perdidos;desistidos';
+  const head = 'dia;recebidos;recebidos_chatwoot;qualificados;produtores;pecuaristas;prestadores;ganhos;perdidos;desistidos';
   const linhas = reportCache.map((r) => [r.dia, r.recebidos, r.recebidos_chatwoot,
-    r.qualificados, r.produtores, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0].join(';'));
+    r.qualificados, r.produtores, r.pecuaristas || 0, r.prestadores, r.ganhos, r.perdidos, r.desistidos || 0].join(';'));
   const csv = '﻿' + head + '\n' + linhas.join('\n') + '\n';
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
@@ -1947,6 +1955,7 @@ document.addEventListener('keydown', (e) => {
 
 $('#tabSDR').addEventListener('click', () => setView('sdr'));
 $('#tabProdutor').addEventListener('click', () => setView('produtor'));
+$('#tabPecuarista').addEventListener('click', () => setView('pecuarista'));
 $('#tabPrestador').addEventListener('click', () => setView('prestador'));
 $('#tabPerdidos').addEventListener('click', () => setView('perdidos'));
 $('#tabDesistiu').addEventListener('click', () => setView('desistiu'));
