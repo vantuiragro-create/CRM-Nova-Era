@@ -247,6 +247,16 @@ body {
   border-radius: 8px; padding: 6px 10px;
 }
 .map-popup .pp-btn:hover { background: var(--green-100); }
+.map-popup .pp-btn.wa { color: #128c4b; border-color: #b6e6c6; background: #e7f7ee; text-decoration: none; }
+.map-popup .pp-btn.wa:hover { background: #d4f0e0; }
+/* botão "Abrir no WhatsApp" ao lado do campo de telefone na ficha */
+.wa-btn {
+  display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 700;
+  color: #128c4b; text-decoration: none; background: #e7f7ee; border: 1px solid #b6e6c6;
+  border-radius: 14px; padding: 2px 10px; vertical-align: middle;
+}
+.wa-btn:hover { background: #d4f0e0; }
+.wa-btn[hidden] { display: none; }
 .map-popup .pp-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--green-700); }
 
 /* ---------- Quadro swimlane ---------- */
@@ -391,6 +401,13 @@ body {
 .card .name .flag { font-size: 11px; margin-right: 3px; }
 .card .row { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .card .row .ic { width: 13px; text-align: center; opacity: 0.85; flex-shrink: 0; }
+/* telefone clicável → abre a conversa no WhatsApp */
+.card .row .wa-link {
+  display: inline-flex; align-items: center; gap: 5px; color: #128c4b;
+  font-weight: 700; text-decoration: none;
+}
+.card .row .wa-link:hover { text-decoration: underline; }
+.card .row .wa-link .ic { opacity: 1; }
 .card .row.esperando { color: var(--amber); font-weight: 700; }
 .card .row.decisor { color: var(--green-700); font-weight: 600; }
 .card .row.resp-vend { color: var(--green-600); font-weight: 700; }

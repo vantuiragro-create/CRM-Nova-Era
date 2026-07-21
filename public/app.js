@@ -93,6 +93,15 @@ const el = (tag, cls, txt) => {
 const brl = (n) =>
   (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
+// Link para abrir a conversa do cliente no WhatsApp (wa.me exige só os dígitos
+// com o código do país). Se veio sem o 55 do Brasil (DDD + número), adiciona.
+function waHref(telefone) {
+  let d = String(telefone || '').replace(/\D/g, '');
+  if (d.length < 8) return '';
+  if (d.length <= 11) d = '55' + d; // 10-11 dígitos = DDD + número, sem o país
+  return 'https://wa.me/' + d;
+}
+
 // Data/hora curta (18/07 14:32) e completa
 function dataHora(iso, completa) {
   if (!iso) return '—';
@@ -522,6 +531,13 @@ function renderMap() {
     }
 
     const acoes = el('div', 'pp-acoes');
+    const waH = waHref(lead.telefone);
+    if (waH) {
+      const wa = document.createElement('a');
+      wa.className = 'pp-btn wa'; wa.href = waH; wa.target = '_blank'; wa.rel = 'noopener';
+      wa.textContent = '💬 WhatsApp';
+      acoes.append(wa);
+    }
     const bEdit = el('button', 'pp-btn', '✏️ Editar lead');
     bEdit.type = 'button';
     bEdit.onclick = () => { map.closePopup(); openModal(lead); };
@@ -805,7 +821,21 @@ function renderCard(lead) {
     nome.append(b);
   }
   card.append(nome);
-  if (lead.telefone) { const r = el('div', 'row'); r.append(el('span', 'ic', '📱'), document.createTextNode(lead.telefone)); card.append(r); }
+  if (lead.telefone) {
+    const r = el('div', 'row');
+    const href = waHref(lead.telefone);
+    if (href) {
+      const a = document.createElement('a');
+      a.className = 'wa-link'; a.href = href; a.target = '_blank'; a.rel = 'noopener';
+      a.title = 'Abrir conversa no WhatsApp';
+      a.append(el('span', 'ic', '💬'), document.createTextNode(lead.telefone));
+      a.addEventListener('click', (e) => e.stopPropagation()); // não abre a ficha
+      r.append(a);
+    } else {
+      r.append(el('span', 'ic', '📱'), document.createTextNode(lead.telefone));
+    }
+    card.append(r);
+  }
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
   if (lead.produto) { const r = el('div', 'row'); r.append(el('span', 'ic', '📦'), document.createTextNode(lead.produto)); card.append(r); }
@@ -964,6 +994,7 @@ function openModal(lead) {
     'cargo', 'decisor', 'decisor_cargo',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
+  atualizaWaLead();
 
   renderPagamentos(lead.formas_pagamento || []);
   modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
@@ -1914,6 +1945,15 @@ $('#tabMap').addEventListener('click', () => setView('map'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento
 form.valor.addEventListener('input', updatePayTotal);
+// link "Abrir no WhatsApp" ao lado do telefone (atualiza ao digitar)
+function atualizaWaLead() {
+  const a = $('#waLead');
+  if (!a) return;
+  const href = waHref(form.telefone.value);
+  a.hidden = !href;
+  if (href) a.href = href;
+}
+form.telefone.addEventListener('input', atualizaWaLead);
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));
