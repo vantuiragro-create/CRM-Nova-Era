@@ -109,6 +109,10 @@ STAGES_EXIGEM_CONTATO = ("proposta", "financiamento", "ganho")
 # Municipios oficiais (IBGE), carregados de public/cidades.json no boot.
 # _CIDADES_CANON mapeia minusculo -> forma canonica "Nome - UF".
 _CIDADES_CANON = {}
+# Mesorregioes do IBGE (Goias): "Nome - GO" -> mesorregiao. De public/mesorregioes.json.
+_MESO = {}
+MESORREGIOES = ["Noroeste Goiano", "Norte Goiano", "Centro Goiano",
+                "Leste Goiano", "Sul Goiano"]
 
 
 def load_cidades():
@@ -119,6 +123,17 @@ def load_cidades():
         print("  %d cidades carregadas (IBGE)" % len(_CIDADES_CANON))
     except Exception as e:
         print("AVISO: nao carregou cidades.json (%s) — regiao fica sem validacao" % e)
+    try:
+        with open(os.path.join(PUBLIC_DIR, "mesorregioes.json"), "r", encoding="utf-8") as f:
+            _MESO.update(json.load(f))
+        print("  %d municipios com mesorregiao (GO)" % len(_MESO))
+    except Exception as e:
+        print("AVISO: nao carregou mesorregioes.json (%s)" % e)
+
+
+def meso_da_regiao(regiao):
+    """Mesorregiao (GO) da cidade do lead, ou None."""
+    return _MESO.get(str(regiao or "").strip())
 
 
 def canon_cidade(valor):
@@ -1590,6 +1605,7 @@ class Handler(BaseHTTPRequestHandler):
                     "produtores": produtores,
                     "prestadores": prestadores,
                     "cidades": cidades,
+                    "mesorregioes": MESORREGIOES,
                     "por_status": por_status,
                     "stages": STAGES,
                 })
@@ -1844,6 +1860,7 @@ class Handler(BaseHTTPRequestHandler):
             pagamento = (qs.get("pagamento") or [""])[0]
             produto = (qs.get("produto") or [""])[0]
             cidade = (qs.get("cidade") or [""])[0]
+            mesorregiao = (qs.get("mesorregiao") or [""])[0]
             f_vendedor = (qs.get("vendedor") or [""])[0]
             f_sdr = (qs.get("sdr") or [""])[0]
 
@@ -1871,6 +1888,8 @@ class Handler(BaseHTTPRequestHandler):
                 leads = [l for l in leads if l.get("produto") == produto]
             if cidade:
                 leads = [l for l in leads if str(l.get("regiao") or "").strip() == cidade]
+            if mesorregiao:
+                leads = [l for l in leads if meso_da_regiao(l.get("regiao")) == mesorregiao]
             if f_vendedor:
                 if f_vendedor == "__none__":
                     leads = [l for l in leads if not str(l.get("vendedor") or "").strip()]

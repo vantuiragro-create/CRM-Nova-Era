@@ -62,7 +62,7 @@ let members = [];
 let campaigns = [];
 let settings = {};
 let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
-let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', hectare: '', vendedor: '', sdr: '' };
+let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', mesorregiao: '', hectare: '', vendedor: '', sdr: '' };
 
 // Faixas de hectare (min/max em ha; max null = sem teto)
 const HECTARE_RANGES = {
@@ -187,6 +187,8 @@ async function loadStats() {
       box.append(d);
     }
     preencheFiltroCidades(s.cidades || []);
+    mesorregioesDisp = s.mesorregioes || mesorregioesDisp;
+    refreshChipOptions('mesorregiao');
   } catch (err) { console.error(err); }
 }
 
@@ -647,6 +649,7 @@ async function loadLeads() {
   if (currentFilters.pagamento) params.set('pagamento', currentFilters.pagamento);
   if (currentFilters.produto) params.set('produto', currentFilters.produto);
   if (currentFilters.cidade) params.set('cidade', currentFilters.cidade);
+  if (currentFilters.mesorregiao) params.set('mesorregiao', currentFilters.mesorregiao);
   if (currentFilters.vendedor) params.set('vendedor', currentFilters.vendedor);
   if (currentFilters.sdr) params.set('sdr', currentFilters.sdr);
   if (currentFilters.hectare && HECTARE_RANGES[currentFilters.hectare]) {
@@ -1969,6 +1972,7 @@ $('#search').addEventListener('input', (e) => {
 // adicionado sob demanda pelo botão "+ Adicionar filtro".
 // ---------------------------------------------------------------------------
 let cidadesDisponiveis = [];   // preenchido pelo /api/stats
+let mesorregioesDisp = [];     // mesorregiões do IBGE (GO), do /api/stats
 let laneOptionsDisp = [];      // preenchido pelo renderBoard
 let chipsAtivos = [];          // ordem das chaves de filtro adicionadas
 
@@ -1976,6 +1980,7 @@ const FILTER_DEFS = {
   produto: { label: 'Drone', client: false, opts: () => PRODUTOS.map((p) => ({ v: p, t: p })) },
   pagamento: { label: 'Forma de pagamento', client: false, opts: () => PAGAMENTOS.map((p) => ({ v: p, t: p })) },
   cidade: { label: 'Cidade', client: false, opts: () => cidadesDisponiveis.map((c) => ({ v: c, t: c })) },
+  mesorregiao: { label: 'Mesorregião (GO)', client: false, opts: () => mesorregioesDisp.map((m) => ({ v: m, t: m })) },
   hectare: {
     label: 'Faixa de hectare', client: false, opts: () => [
       { v: '0-500', t: 'Até 500 ha' }, { v: '500-1000', t: '500 – 1.000 ha' },
