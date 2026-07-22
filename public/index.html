@@ -15,8 +15,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Nova Era" />
   <meta name="theme-color" content="#00303c" />
+  <!-- Service Worker: deixa o CRM abrir e registrar visitas/notas offline (campo sem sinal) -->
+  <script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {})); }</script>
 </head>
 <body>
+  <!-- barra de status offline / envio pendente (controlada pelo app.js) -->
+  <div class="offline-bar" id="offlineBar" hidden></div>
   <header class="topbar">
     <div class="brand">
       <img class="logo-img" src="brand/icone.png" alt="Nova Era Drones" />

@@ -203,6 +203,20 @@ def _parse_iso(iso):
     return dt
 
 
+def ts_offline(valor):
+    """Horario de um registro feito OFFLINE (visita/nota): usa o instante do
+    evento enviado pelo cliente, se for valido e plausivel (nao no futuro, nao
+    mais de 30 dias atras). Caso contrario, usa agora. Assim uma visita feita as
+    08h e sincronizada as 18h fica com 08h, sem confiar cegamente no relogio."""
+    t = _parse_iso(valor)
+    if not t:
+        return now_iso()
+    agora = datetime.now(timezone.utc)
+    if t > agora + timedelta(minutes=1) or t < agora - timedelta(days=30):
+        return now_iso()
+    return t.isoformat()
+
+
 HEAT_DIAS = 7        # janela do "termometro" (mesma regra do front)
 HEAT_QUENTE = 3      # nº de atualizacoes recentes p/ virar "quente"
 
@@ -506,19 +520,23 @@ HIST_LABEL = {
 }
 
 
-def registra_hist(lead, autor, itens, papel=None, tipo=None):
+def registra_hist(lead, autor, itens, papel=None, tipo=None, op_id=None, quando=None):
     """Anexa uma entrada na linha do tempo do lead (mantem as ultimas 300).
 
     papel = cargo de quem fez (admin/gerente/vendedor/sdr) para aparecer no
-    painel; tipo = 'nota' quando for uma atualizacao escrita a mao."""
+    painel; tipo = 'nota' quando for uma atualizacao escrita a mao; op_id =
+    id do registro offline (para nao duplicar em reenvios); quando = horario do
+    evento (registros offline) — padrao agora."""
     itens = [i for i in itens if i]
     if not itens:
         return
-    entrada = {"data": now_iso(), "autor": autor or "Sistema", "itens": itens}
+    entrada = {"data": quando or now_iso(), "autor": autor or "Sistema", "itens": itens}
     if papel:
         entrada["papel"] = papel
     if tipo:
         entrada["tipo"] = tipo
+    if op_id:
+        entrada["op_id"] = op_id
     lead.setdefault("historico", []).append(entrada)
     if len(lead["historico"]) > 300:
         lead["historico"] = lead["historico"][-300:]
@@ -2136,25 +2154,35 @@ class Handler(BaseHTTPRequestHandler):
                     acc = float(body.get("acc"))  # precisao em metros (se enviada)
                 except (TypeError, ValueError):
                     acc = None
+                op_id = str(body.get("op_id") or "").strip()[:64]
                 vid = new_id()
                 with _lock:
                     lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
                     if not lead or not pode_ver_lead(user, lead):
                         return self.send_json(404, {"error": "Lead nao encontrado"})
+                    # idempotencia: visita registrada offline pode ser reenviada — se
+                    # o op_id ja existe, devolve a visita existente (nao duplica foto).
+                    if op_id:
+                        ja = next((v for v in lead.get("visitas", []) if v.get("op_id") == op_id), None)
+                        if ja:
+                            return self.send_json(201, {"visita": ja, "total": len(lead["visitas"])})
                     # foto so e gravada em disco APOS confirmar o lead (evita arquivo orfao)
                     try:
                         foto = salva_foto_visita(body.get("foto"), vid)
                     except ValueError as e:
                         return self.send_json(400, {"error": str(e)})
+                    quando = ts_offline(body.get("criado_em"))  # hora da visita (offline) ou agora
                     visita = {
                         "id": vid,
-                        "data": now_iso(),
+                        "data": quando,
                         "visitante": user["nome"],
                         "resultado": resultado,
                         "obs": str(body.get("obs") or "").strip()[:2000],
                         "foto": foto,
                         "lat": la, "lng": lo,
                     }
+                    if op_id:
+                        visita["op_id"] = op_id
                     lead.setdefault("visitas", []).append(visita)
                     # So atualiza a localizacao da fazenda se ela ainda nao foi
                     # ajustada, ou se a leitura for precisa (<=150 m). Assim uma
@@ -2162,7 +2190,7 @@ class Handler(BaseHTTPRequestHandler):
                     sem_local = lead.get("lat") is None or lead.get("lng") is None
                     if sem_local or (acc is not None and acc <= 150):
                         lead["lat"], lead["lng"] = la, lo
-                    registra_hist(lead, user["nome"], ["🚗 Visita registrada" + (": " + resultado if resultado else "")], papel=user["papel"])
+                    registra_hist(lead, user["nome"], ["🚗 Visita registrada" + (": " + resultado if resultado else "")], papel=user["papel"], op_id=op_id or None, quando=quando)
                     lead["updated_at"] = now_iso()
                     save_db()
                     return self.send_json(201, {"visita": visita, "total": len(lead["visitas"])})
@@ -2197,11 +2225,19 @@ class Handler(BaseHTTPRequestHandler):
             texto = str(body.get("texto") or "").strip()[:2000]
             if not texto:
                 return self.send_json(400, {"error": "Escreva a atualização antes de salvar"})
+            op_id = str(body.get("op_id") or "").strip()[:64]
             with _lock:
                 lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
                 if not lead or not pode_ver_lead(user, lead):
                     return self.send_json(404, {"error": "Lead nao encontrado"})
-                registra_hist(lead, user["nome"], ["💬 " + texto], papel=user["papel"], tipo="nota")
+                # idempotencia: nota registrada offline pode ser reenviada — se o
+                # op_id ja existe, devolve a entrada existente sem duplicar.
+                if op_id:
+                    ja = next((h for h in lead.get("historico", []) if h.get("op_id") == op_id), None)
+                    if ja:
+                        return self.send_json(201, {"entrada": ja,
+                                                    "aguardando_resposta": lead.get("aguardando_resposta")})
+                registra_hist(lead, user["nome"], ["💬 " + texto], papel=user["papel"], tipo="nota", op_id=op_id or None, quando=ts_offline(body.get("criado_em")))
                 # A atualizacao escrita E o registro da resposta: some o alerta.
                 lead["aguardando_resposta"] = None
                 lead["updated_at"] = now_iso()

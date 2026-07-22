@@ -155,7 +155,17 @@ function toast(msg) {
 }
 
 async function api(path, opts) {
-  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const metodo = ((opts && opts.method) || 'GET').toUpperCase();
+  let res;
+  try {
+    res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  } catch (_) {
+    // fetch falhou = sem rede / servidor inacessível. Só uma ESCRITA nos diz isso
+    // com certeza (GET pode vir do cache do service worker mesmo offline).
+    if (metodo !== 'GET') marcaOffline(true);
+    const e = new Error('Sem conexão com o servidor'); e.offline = true; throw e;
+  }
+  if (metodo !== 'GET') marcaOffline(false); // uma escrita que passou = estamos online
   if (res.status === 401) {
     window.location.href = 'login.html'; // sessão expirou: volta pro login
     throw new Error('Sessão expirada');
@@ -163,10 +173,203 @@ async function api(path, opts) {
   if (!res.ok) {
     let msg = 'Erro na requisição';
     try { msg = (await res.json()).error || msg; } catch (_) {}
-    throw new Error(msg);
+    const e = new Error(msg); e.status = res.status; throw e; // status p/ a fila decidir
   }
   return res.status === 204 ? null : res.json();
 }
+
+// ===========================================================================
+// OFFLINE — o vendedor no campo (sem sinal) abre o CRM (service worker), vê os
+// leads carregados antes e registra VISITA/NOTA; tudo fica guardado no aparelho
+// (IndexedDB) e é enviado sozinho quando o sinal volta. As escritas levam um
+// op_id: se uma foi enviada mas a resposta se perdeu, o servidor ignora a 2ª.
+// ===========================================================================
+let estaOffline = !navigator.onLine;
+let flushando = false;
+
+function gerarOpId() {
+  return 'op_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// --- fila persistente (IndexedDB) ---
+function abreDB() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) return reject(new Error('sem indexedDB'));
+    const r = indexedDB.open('nova-era-offline', 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains('fila')) db.createObjectStore('fila', { keyPath: 'op_id' });
+    };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function filaAdd(item) {
+  const db = await abreDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('fila', 'readwrite');
+    tx.objectStore('fila').put(item);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function filaTodos() {
+  const db = await abreDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('fila', 'readonly');
+    const q = tx.objectStore('fila').getAll();
+    q.onsuccess = () => res(q.result || []);
+    q.onerror = () => rej(q.error);
+  });
+}
+async function filaDel(opId) {
+  const db = await abreDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('fila', 'readwrite');
+    tx.objectStore('fila').delete(opId);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function filaCount() { try { return (await filaTodos()).length; } catch (_) { return 0; } }
+
+// apaga do cache do service worker as respostas de /api/* (dados do usuário) —
+// chamado no logout para o próximo login não herdar leads/fotos de quem saiu.
+async function limpaCacheApi() {
+  if (!('caches' in window)) return;
+  try {
+    for (const nome of await caches.keys()) {
+      const c = await caches.open(nome);
+      for (const req of await c.keys()) {
+        if (new URL(req.url).pathname.startsWith('/api/')) await c.delete(req);
+      }
+    }
+  } catch (_) { /* cache indisponível: ignora */ }
+}
+
+// --- estado/UI ---
+function marcaOffline(off) {
+  if (estaOffline === off) return;
+  estaOffline = off;
+  atualizaOfflineBar();
+}
+async function atualizaOfflineBar() {
+  const bar = $('#offlineBar');
+  if (!bar) return;
+  const n = await filaCount();
+  if (estaOffline) {
+    bar.hidden = false;
+    bar.classList.remove('enviando');
+    bar.textContent = n
+      ? `📴 Sem internet — ${n} registro(s) salvo(s) no aparelho; envio sozinho quando o sinal voltar.`
+      : '📴 Sem internet — você pode registrar visitas e notas; envio sozinho quando o sinal voltar.';
+  } else if (n) {
+    bar.hidden = false;
+    bar.classList.add('enviando');
+    bar.textContent = `⏳ Enviando ${n} registro(s) salvo(s) no aparelho…`;
+  } else {
+    bar.hidden = true;
+    bar.classList.remove('enviando');
+  }
+}
+
+// monta a "visita" local (otimista) a partir do corpo enviado
+function visitaLocalDoBody(body, opId) {
+  return {
+    id: opId, op_id: opId, data: body.criado_em || new Date().toISOString(),
+    visitante: (me && me.nome) || 'Você', resultado: body.resultado || '',
+    obs: body.obs || '', foto: body.foto || '', lat: body.lat, lng: body.lng,
+    _pendente: true,
+  };
+}
+
+// aplica no cache local (para aparecer na hora, mesmo offline)
+function aplicaVisitaLocal(id, visita, pendente) {
+  const lead = leadsCache.find((l) => l.id === id);
+  if (!lead) return;
+  lead.visitas = lead.visitas || [];
+  if (!lead.visitas.some((v) => v.op_id && v.op_id === visita.op_id)) lead.visitas.push(visita);
+  lead.historico = lead.historico || [];
+  lead.historico.push({
+    data: visita.data, autor: visita.visitante, papel: me && me.papel,
+    itens: ['🚗 Visita registrada' + (visita.resultado ? ': ' + visita.resultado : '')],
+    op_id: visita.op_id, _pendente: !!pendente,
+  });
+  lead.updated_at = visita.data;
+  renderVisitas(lead); renderHistorico(lead); renderBoard();
+}
+
+// junta os registros ainda pendentes (IndexedDB) aos leads recém-carregados,
+// para que continuem visíveis mesmo se o app for reaberto offline
+async function mesclaFilaPendente() {
+  let itens;
+  try { itens = await filaTodos(); } catch (_) { return; }
+  if (!itens.length) return;
+  for (const it of itens) {
+    const lead = leadsCache.find((l) => l.id === it.lead_id);
+    if (!lead) continue;
+    lead.historico = lead.historico || [];
+    if (lead.historico.some((h) => h.op_id === it.op_id)) continue;
+    if (it.tipo === 'visita') {
+      lead.visitas = lead.visitas || [];
+      if (!lead.visitas.some((v) => v.op_id === it.op_id)) lead.visitas.push(visitaLocalDoBody(it.body, it.op_id));
+      lead.historico.push({
+        data: it.criado_em, autor: (me && me.nome) || 'Você', papel: me && me.papel,
+        itens: ['🚗 Visita registrada' + (it.body.resultado ? ': ' + it.body.resultado : '')],
+        op_id: it.op_id, _pendente: true,
+      });
+    } else if (it.tipo === 'nota') {
+      lead.historico.push({
+        data: it.criado_em, autor: (me && me.nome) || 'Você', papel: me && me.papel,
+        itens: ['💬 ' + it.body.texto], tipo: 'nota', op_id: it.op_id, _pendente: true,
+      });
+    }
+  }
+}
+
+// envia a fila quando há sinal. Chamado no boot, no evento 'online' e a cada
+// ciclo de atualização. NUNCA descarta silenciosamente um registro do campo:
+// - sem sinal / sessão expirada (401) / servidor fora (5xx): PARA e mantém tudo
+//   para tentar de novo depois (a idempotência por op_id evita duplicar);
+// - registro recusado por validação (400/422): descarta, mas AVISA na tela;
+// - outros erros por lead (403/404): mantém e segue, sem travar os demais.
+async function flushFila() {
+  if (flushando) return;
+  flushando = true; // trava síncrona (antes de qualquer await): sem corrida entre gatilhos
+  try {
+    let itens;
+    try { itens = await filaTodos(); } catch (_) { return; }
+    if (!itens.length) { atualizaOfflineBar(); return; }
+    itens.sort((a, b) => (a.criado_em < b.criado_em ? -1 : 1));
+    let enviados = 0;
+    atualizaOfflineBar();
+    for (const it of itens) {
+      try {
+        await api(it.url, { method: 'POST', body: JSON.stringify(it.body) });
+        await filaDel(it.op_id);
+        enviados++;
+      } catch (err) {
+        const st = err.status || 0;
+        if (err.offline || st === 401 || st >= 500) break; // sistêmico: para e mantém TUDO
+        if (st === 400 || st === 422) {                    // inválido: nunca entra — descarta com aviso
+          await filaDel(it.op_id);
+          toast('⚠️ Um registro do campo foi recusado pelo servidor e não pôde ser enviado.');
+          continue;
+        }
+        console.warn('Registro offline mantido p/ tentar depois:', it.tipo, st, err.message);
+        // 403/404 e afins: mantém na fila (não perde) e segue para os próximos
+      }
+    }
+    if (enviados) {
+      toast(`✅ ${enviados} registro(s) do campo enviado(s)`);
+      try { await loadLeads(); } catch (_) {} // reconcilia com a verdade do servidor
+    }
+    atualizaOfflineBar();
+  } finally { flushando = false; }
+}
+
+window.addEventListener('offline', () => marcaOffline(true));
+window.addEventListener('online', () => { marcaOffline(false); flushFila(); });
 
 // Dono do lead DENTRO de um funil (SDR no funil SDR, vendedor no de Vendas)
 function laneKeyForLead(lead, funil) {
@@ -772,6 +975,7 @@ async function loadLeads() {
   const data = await api('/api/leads?' + params.toString());
   STAGES = data.stages || STAGES;
   leadsCache = data.leads || [];
+  await mesclaFilaPendente(); // mantém visitas/notas offline visíveis até sincronizar
   primeiroLoadFeito = true;
   if (currentView === 'perdidos') renderLost();
   else if (currentView === 'desistiu') renderDesistiu();
@@ -1408,7 +1612,10 @@ function renderHistorico(lead) {
   }
   for (const h of hist) {
     const e = el('div', 'hist-entry' + (h.tipo === 'nota' ? ' nota' : ''));
-    e.append(el('div', 'hist-when', dataHora(h.data, true)));
+    const quando = el('div', 'hist-when');
+    quando.append(document.createTextNode(dataHora(h.data, true)));
+    if (h._pendente) quando.append(el('span', 'pendente-envio', '📴 aguardando enviar'));
+    e.append(quando);
     const autor = h.autor || 'Sistema';
     const cargo = h.papel ? papelLabel(h.papel) : '';
     const quem = '👤 ' + autor + (cargo && cargo !== autor ? ' · ' + cargo : '');
@@ -1429,12 +1636,12 @@ async function adicionarNota() {
   const btn = $('#histNotaBtn');
   // desabilita botão E textarea: bloqueia duplo-envio e evita perder rascunho novo
   btn.disabled = true; ta.disabled = true; btn.textContent = 'Salvando…';
+  const opId = gerarOpId();
+  const url = '/api/leads/' + encodeURIComponent(id) + '/notas';
+  const lead = leadsCache.find((l) => l.id === id);
   try {
-    const res = await api('/api/leads/' + encodeURIComponent(id) + '/notas', {
-      method: 'POST', body: JSON.stringify({ texto }),
-    });
+    const res = await api(url, { method: 'POST', body: JSON.stringify({ op_id: opId, texto }) });
     ta.value = ''; // texto enviado com sucesso: limpa o campo
-    const lead = leadsCache.find((l) => l.id === id);
     if (lead) {
       lead.historico = lead.historico || [];
       lead.historico.push(res.entrada);
@@ -1447,7 +1654,20 @@ async function adicionarNota() {
     }
     toast('✅ Atualização adicionada');
   } catch (err) {
-    toast('Erro ao adicionar: ' + err.message);
+    if (!err.offline) { toast('Erro ao adicionar: ' + err.message); return; }
+    // sem sinal: guarda no aparelho e envia depois (criado_em = hora real da nota)
+    const criadoEm = new Date().toISOString();
+    await filaAdd({ op_id: opId, tipo: 'nota', lead_id: id, lead_nome: form.nome.value || 'Lead', url, body: { op_id: opId, texto, criado_em: criadoEm }, criado_em: criadoEm });
+    ta.value = '';
+    if (lead) {
+      lead.historico = lead.historico || [];
+      lead.historico.push({ data: criadoEm, autor: (me && me.nome) || 'Você', papel: me && me.papel, itens: ['💬 ' + texto], tipo: 'nota', op_id: opId, _pendente: true });
+      lead.aguardando_resposta = null; // registrou a resposta (será confirmado no envio)
+      renderHistorico(lead);
+      renderBoard();
+    }
+    toast('📴 Sem internet — anotação salva no aparelho; envio quando o sinal voltar');
+    atualizaOfflineBar();
   } finally {
     salvandoNota = false;
     btn.disabled = false; ta.disabled = false; btn.textContent = 'Adicionar';
@@ -1466,24 +1686,30 @@ function renderVisitas(lead) {
   for (const v of [...visitas].reverse()) {
     const item = el('div', 'visit-item');
     if (v.foto) {
+      // visita pendente guarda a foto como data:base64; a sincronizada, o nome do arquivo
+      const fotoSrc = v.foto.startsWith('data:') ? v.foto : 'api/foto/' + encodeURIComponent(v.foto);
       const a = document.createElement('a');
-      a.href = 'api/foto/' + encodeURIComponent(v.foto);
+      a.href = fotoSrc;
       a.target = '_blank';
       const img = document.createElement('img');
       img.className = 'visit-thumb';
-      img.src = 'api/foto/' + encodeURIComponent(v.foto);
+      img.src = fotoSrc;
       img.alt = 'Foto da fazenda';
       a.append(img);
       item.append(a);
     }
     const info = el('div', 'visit-info');
-    info.append(el('div', 'visit-res', v.resultado || '(sem resultado)'));
+    const res = el('div', 'visit-res');
+    res.append(document.createTextNode(v.resultado || '(sem resultado)'));
+    if (v._pendente) res.append(el('span', 'pendente-envio', '📴 aguardando enviar'));
+    info.append(res);
     const meta = el('div', 'visit-meta');
     meta.textContent = `👤 ${v.visitante || '—'} · ${dataHora(v.data, true)}`;
     info.append(meta);
     if (v.obs) info.append(el('div', 'visit-obs', v.obs));
     item.append(info);
-    const podeExcluir = me && (me.papel === 'admin' || me.papel === 'gerente' || v.visitante === me.nome);
+    // visita ainda não enviada não pode ser excluída pelo id do servidor
+    const podeExcluir = !v._pendente && me && (me.papel === 'admin' || me.papel === 'gerente' || v.visitante === me.nome);
     if (podeExcluir) {
       const del = el('button', 'icon-btn', '🗑️');
       del.type = 'button';
@@ -1535,10 +1761,12 @@ function pegarLocalizacao() {
 async function salvarVisita() {
   const id = form.id.value;
   if (!id) return;
+  const nome = form.nome.value || 'Lead';
   const btn = $('#visitSalvar');
   btn.disabled = true; btn.textContent = 'Obtendo localização…';
   try {
-    // GPS é obrigatório: sem localização, a visita não é registrada
+    // GPS é obrigatório: sem localização, a visita não é registrada.
+    // (O GPS funciona SEM internet — é o chip do aparelho.)
     const loc = await pegarLocalizacao();
     if (!loc) {
       toast('📍 Ative/permita a localização (GPS) para registrar a visita');
@@ -1546,31 +1774,33 @@ async function salvarVisita() {
       return;
     }
     btn.textContent = 'Salvando…';
+    const opId = gerarOpId();
     const body = {
+      op_id: opId,
       resultado: $('#visitResultado').value,
       obs: $('#visitObs').value,
       foto: visitFotoData || '',
-      lat: loc.lat,
-      lng: loc.lng,
-      acc: loc.acc,
+      lat: loc.lat, lng: loc.lng, acc: loc.acc,
     };
-    const res = await api('/api/leads/' + encodeURIComponent(id) + '/visitas', {
-      method: 'POST', body: JSON.stringify(body),
-    });
-    // atualiza o lead em memória e as telas
-    const lead = leadsCache.find((l) => l.id === id);
-    if (lead) {
-      lead.visitas = lead.visitas || [];
-      lead.visitas.push(res.visita);
-      // reflete a visita no histórico do painel (o servidor já gravou)
-      lead.historico = lead.historico || [];
-      lead.historico.push({ data: res.visita.data, autor: res.visita.visitante, papel: me && me.papel, itens: ['🚗 Visita registrada' + (res.visita.resultado ? ': ' + res.visita.resultado : '')] });
-      renderVisitas(lead);
-      renderHistorico(lead);
-      renderBoard();
+    const url = '/api/leads/' + encodeURIComponent(id) + '/visitas';
+    try {
+      const res = await api(url, { method: 'POST', body: JSON.stringify(body) });
+      const v = res.visita; v.op_id = v.op_id || opId;
+      aplicaVisitaLocal(id, v, false);
+      $('#visitBackdrop').hidden = true;
+      toast('✅ Visita registrada');
+    } catch (err) {
+      if (!err.offline) throw err; // erro real do servidor: mostra
+      // sem sinal: guarda no aparelho e envia depois. criado_em no corpo faz o
+      // servidor registrar o HORÁRIO DA VISITA (não o da sincronização).
+      const criadoEm = new Date().toISOString();
+      body.criado_em = criadoEm;
+      await filaAdd({ op_id: opId, tipo: 'visita', lead_id: id, lead_nome: nome, url, body, criado_em: criadoEm });
+      aplicaVisitaLocal(id, visitaLocalDoBody(body, opId), true);
+      $('#visitBackdrop').hidden = true;
+      toast('📴 Sem internet — visita salva no aparelho; envio quando o sinal voltar');
+      atualizaOfflineBar();
     }
-    $('#visitBackdrop').hidden = true;
-    toast('✅ Visita registrada');
   } catch (err) {
     toast('Erro ao salvar visita: ' + err.message);
   } finally {
@@ -2083,6 +2313,7 @@ $('#campBackdrop').addEventListener('click', (e) => {
 $('#btnUsers').addEventListener('click', () => { renderTeam(); $('#teamBackdrop').hidden = false; });
 $('#btnLogout').addEventListener('click', async () => {
   try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
+  await limpaCacheApi(); // não deixar dados deste usuário no cache p/ o próximo login
   window.location.href = 'login.html';
 });
 $('#teamClose').addEventListener('click', () => { $('#teamBackdrop').hidden = true; });
@@ -2378,6 +2609,7 @@ setInterval(async () => {
   // usuário: o que ele confirmou tem que ser o que será alterado
   if (!$('#bulkBackdrop').hidden) return;
   await refreshAll();
+  flushFila(); // tenta enviar o que foi registrado offline (se voltou o sinal)
   if (!$('#campBackdrop').hidden) renderCampReport();
 }, 15000);
 
@@ -2420,5 +2652,7 @@ function applyRoleUI() {
   currentFilters.q = $('#search').value || '';
   atualizaBotaoLimpar();
   applyRoleUI();
-  refreshAll();
+  await refreshAll();
+  atualizaOfflineBar();   // reflete estado inicial + registros pendentes de sessões anteriores
+  flushFila();            // envia o que ficou da última vez offline
 })();

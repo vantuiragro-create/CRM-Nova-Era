@@ -91,6 +91,17 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Falha no login');
+        // novo login: apaga do cache os dados (/api/*) de um usuário anterior neste aparelho
+        if (window.caches) {
+          try {
+            for (const nome of await caches.keys()) {
+              const c = await caches.open(nome);
+              for (const req of await c.keys()) {
+                if (new URL(req.url).pathname.startsWith('/api/')) await c.delete(req);
+              }
+            }
+          } catch (_) {}
+        }
         window.location.href = './';
       } catch (err) {
         erro.textContent = err.message;
