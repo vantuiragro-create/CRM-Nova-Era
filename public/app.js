@@ -71,6 +71,7 @@ let campaigns = [];
 let settings = {};
 let me = null; // usuário logado {nome, papel: admin|gerente|vendedor|sdr}
 let currentFilters = { q: '', canal: '', lane: '', pagamento: '', produto: '', cidade: '', mesorregiao: '', hectare: '', vendedor: '', sdr: '' };
+let escopo = 'atuais'; // 'atuais' (funil dos leads novos) | 'recuperacao' (clientes antigos)
 
 // Faixas de hectare (min/max em ha; max null = sem teto)
 const HECTARE_RANGES = {
@@ -381,12 +382,13 @@ function laneKeyForLead(lead, funil) {
 // ---------------------------------------------------------------------------
 async function loadStats() {
   try {
-    const s = await api('/api/stats');
+    const s = await api('/api/stats?escopo=' + escopo);
     STAGES = s.stages || STAGES;
     // prazos dos alertas chegam a TODOS os papéis por aqui (settings via campanhas
     // pode ser só do gestor); mantém os badges corretos para os vendedores também
     if (s.cadencia_dias) settings.cadencia_dias = s.cadencia_dias;
     if (s.resposta_horas) settings.resposta_horas = s.resposta_horas;
+    atualizaEscopoSwitch(s.atuais_total, s.recuperacao_total);
     const box = $('#stats');
     box.innerHTML = '';
     const cards = [
@@ -875,6 +877,26 @@ function setView(view) {
   }
 }
 
+// Escopo: "Atuais" (funil dos leads novos) x "Recuperação" (clientes antigos).
+// Um botão troca o app inteiro entre os dois lotes, sem misturar.
+function atualizaEscopoSwitch(nAtuais, nRecup) {
+  const a = $('#escAtuais'); const r = $('#escRecup');
+  if (a) a.classList.toggle('active', escopo === 'atuais');
+  if (r) r.classList.toggle('active', escopo === 'recuperacao');
+  document.body.classList.toggle('modo-recuperacao', escopo === 'recuperacao');
+  const badge = $('#escRecupBadge');
+  if (badge && nRecup != null) {
+    if (nRecup > 0) { badge.hidden = false; badge.textContent = nRecup; }
+    else badge.hidden = true;
+  }
+}
+async function setEscopo(novo) {
+  if (novo === escopo) return;
+  escopo = novo;
+  atualizaEscopoSwitch();      // troca visual imediata
+  await refreshAll();          // recarrega leads + stats no novo lote (stats atualiza o badge)
+}
+
 // Lista de casos encerrados (perdido / desistiu) para resgate. Uma função só
 // para as duas abas nunca divergirem.
 function renderResgate(cfg) {
@@ -959,6 +981,7 @@ function renderAlertas() {
 
 async function loadLeads() {
   const params = new URLSearchParams();
+  params.set('escopo', escopo); // atuais x recuperação
   if (currentFilters.q) params.set('q', currentFilters.q);
   if (currentFilters.canal) params.set('canal', currentFilters.canal);
   if (currentFilters.pagamento) params.set('pagamento', currentFilters.pagamento);
@@ -1327,6 +1350,8 @@ function openModal(lead) {
 
   // tipo (radio)
   for (const r of form.querySelectorAll('[name=tipo]')) r.checked = (r.value === (lead.tipo || ''));
+  // lead de recuperação (checkbox) — lead novo herda o escopo em que você está
+  if (form.recuperacao) form.recuperacao.checked = isNew ? (escopo === 'recuperacao') : !!lead.recuperacao;
 
   form.id.value = lead.id || '';
   // canal fora da lista fixa (ex.: utm_source cru vindo do webhook): injeta a
@@ -1392,6 +1417,7 @@ function collectFormValues() {
   for (const field of form.elements) {
     if (!field.name || field.name === 'id') continue;
     if (field.type === 'radio') { if (field.checked) vals[field.name] = field.value; }
+    else if (field.type === 'checkbox') vals[field.name] = field.checked;
     else vals[field.name] = field.value;
   }
   return vals;
@@ -2417,6 +2443,8 @@ $('#tabPrestador').addEventListener('click', () => setView('prestador'));
 $('#tabPerdidos').addEventListener('click', () => setView('perdidos'));
 $('#tabDesistiu').addEventListener('click', () => setView('desistiu'));
 $('#tabMap').addEventListener('click', () => setView('map'));
+$('#escAtuais').addEventListener('click', () => setEscopo('atuais'));
+$('#escRecup').addEventListener('click', () => setEscopo('recuperacao'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento
 form.valor.addEventListener('input', updatePayTotal);

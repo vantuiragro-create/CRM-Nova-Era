@@ -70,6 +70,10 @@
   </header>
 
   <div class="toolbar">
+    <div class="escopo-switch" id="escopoSwitch" role="tablist" aria-label="Escopo dos leads">
+      <button type="button" class="escopo-opt active" id="escAtuais" data-escopo="atuais">📊 Atuais</button>
+      <button type="button" class="escopo-opt" id="escRecup" data-escopo="recuperacao">🔄 Recuperação<span class="escopo-badge" id="escRecupBadge" hidden></span></button>
+    </div>
     <div class="view-tabs" role="tablist">
       <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
       <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
@@ -154,6 +158,9 @@
             <label class="seg-opt pecuarista"><input type="radio" name="tipo" value="pecuarista" /> <span>🐄 Pecuarista</span></label>
             <label class="seg-opt prestador"><input type="radio" name="tipo" value="prestador" /> <span>🔧 Prestador de serviço</span></label>
           </div>
+          <label class="recup-toggle" title="Cliente antigo que você está tentando recuperar — fica na aba Recuperação, fora do funil dos leads novos">
+            <input type="checkbox" name="recuperacao" /> <span>🔄 Lead de recuperação (cliente antigo)</span>
+          </label>
         </div>
 
         <div class="grid">

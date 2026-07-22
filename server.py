@@ -83,7 +83,7 @@ EDITABLE = {
     "cargo", "decisor", "decisor_cargo", "formas_pagamento",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
-    "utm_term", "status", "observacoes", "lat", "lng",
+    "utm_term", "status", "observacoes", "lat", "lng", "recuperacao",
 }
 
 # Canais aceitos para campanhas cadastradas
@@ -355,6 +355,9 @@ def load_db():
                 if not isinstance(l.get("itens"), list):
                     # lead antigo tinha um produto unico -> vira 1 item do pedido
                     l["itens"] = itens_de_produto(l.get("produto"))
+                # leads que ja existiam ANTES desta versao sao o lote de
+                # recuperacao (clientes do passado); os novos nascem como atuais.
+                l.setdefault("recuperacao", True)
                 if not isinstance(l.get("visitas"), list):
                     l["visitas"] = []
                 if not isinstance(l.get("historico"), list):
@@ -421,6 +424,8 @@ def make_lead(partial=None):
         "utm_content": "",
         "utm_term": "",
         "status": "novo",
+        "recuperacao": False,  # True = cliente antigo em recuperacao (fica na aba
+                               # "Recuperacao", fora do funil dos leads NOVOS)
         "observacoes": "",
         "lat": None,   # localizacao exata da fazenda (ajustada no mapa);
         "lng": None,   # None = usar o centro da cidade (regiao) como aproximacao
@@ -651,6 +656,9 @@ def apply_updates(lead, updates):
             continue
         if key == "formas_pagamento":
             lead["formas_pagamento"] = sanitiza_pagamentos(value)
+            continue
+        if key == "recuperacao":
+            lead["recuperacao"] = bool(value)
             continue
         if key == "regiao" and value and _CIDADES_CANON:
             canon = canon_cidade(value)
@@ -1753,8 +1761,16 @@ class Handler(BaseHTTPRequestHandler):
 
         # Estatisticas (calculadas sobre os leads que ESTE usuario pode ver)
         if path == "/api/stats" and method == "GET":
+            escopo = (qs.get("escopo") or ["atuais"])[0]
             with _lock:
-                visiveis = [l for l in _db["leads"] if pode_ver_lead(user, l)]
+                todos_visiveis = [l for l in _db["leads"] if pode_ver_lead(user, l)]
+                # contagens dos dois lotes (para o botao Atuais/Recuperacao)
+                n_recuperacao = sum(1 for l in todos_visiveis if l.get("recuperacao"))
+                n_atuais = len(todos_visiveis) - n_recuperacao
+                if escopo == "recuperacao":
+                    visiveis = [l for l in todos_visiveis if l.get("recuperacao")]
+                else:
+                    visiveis = [l for l in todos_visiveis if not l.get("recuperacao")]
                 por_status = {s: {"count": 0, "valor": 0} for s in STAGES}
                 total_valor = 0
                 for l in visiveis:
@@ -1781,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                     "aguardando_resposta": aguardando,
                     "retornos": retornos,
                     "alertas": aguardando + retornos,
+                    "atuais_total": n_atuais,
+                    "recuperacao_total": n_recuperacao,
                     "cadencia_dias": _cad,
                     "resposta_horas": resposta_horas_cfg(),
                     "cidades": cidades,
@@ -1910,6 +1928,8 @@ class Handler(BaseHTTPRequestHandler):
                        "codigo": "", "ativo": True, "leads": 0, "produtores": 0,
                        "ganhos": 0, "valor_ganho": 0.0, "valor_aberto": 0.0}
                 for l in _db["leads"]:
+                    if l.get("recuperacao"):
+                        continue  # relatorio = pipeline atual, sem o lote de recuperacao
                     row = rows.get(l.get("campanha_id") or "", sem)
                     row["leads"] += 1
                     if l.get("tipo") == "produtor":
@@ -1943,6 +1963,8 @@ class Handler(BaseHTTPRequestHandler):
                         "ganhos": 0, "perdidos": 0, "desistidos": 0})
 
                 for l in _db["leads"]:
+                    if l.get("recuperacao"):
+                        continue  # relatorio = leads NOVOS, sem o lote de recuperacao
                     d = dia_brt(l.get("created_at"))
                     if d:
                         b = bucket(d)
@@ -2054,6 +2076,8 @@ class Handler(BaseHTTPRequestHandler):
             mesorregiao = (qs.get("mesorregiao") or [""])[0]
             f_vendedor = (qs.get("vendedor") or [""])[0]
             f_sdr = (qs.get("sdr") or [""])[0]
+            # escopo: "atuais" (padrao, funil dos leads NOVOS) x "recuperacao"
+            escopo = (qs.get("escopo") or ["atuais"])[0]
 
             def _f(k):
                 try:
@@ -2064,6 +2088,11 @@ class Handler(BaseHTTPRequestHandler):
 
             with _lock:
                 leads = [l for l in _db["leads"] if pode_ver_lead(user, l)]
+            # separa o lote de recuperacao (clientes antigos) dos leads atuais
+            if escopo == "recuperacao":
+                leads = [l for l in leads if l.get("recuperacao")]
+            else:
+                leads = [l for l in leads if not l.get("recuperacao")]
             if q:
                 def match(l):
                     blob = " ".join(str(l.get(k) or "") for k in
