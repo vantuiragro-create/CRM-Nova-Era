@@ -649,6 +649,9 @@ label input:focus, label select:focus, label textarea:focus {
 .team-empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 10px; }
 .team-row .tlogin { color: var(--muted); font-weight: 500; font-size: 11px; }
 .team-row select { font: inherit; font-size: 12px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.recup-btn { font: inherit; font-size: 11px; font-weight: 700; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); background: #f2f4f2; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.recup-btn.on { background: var(--green-100); color: var(--green-700); border-color: var(--green-500); }
+.recup-btn:hover { filter: brightness(0.97); }
 .role-badge.outro { background: #ede9fe; color: var(--purple); }
 .user-add { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto auto; gap: 8px; }
 .user-add input, .user-add select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }

@@ -1087,11 +1087,19 @@ def renomeia_dono_leads(antigo, novo):
                 v["visitante"] = novo
 
 
+def pode_recuperacao(user):
+    """Quem pode ver/trabalhar o painel de Recuperação: admin/gerente sempre;
+    SDR/vendedor só quando liberado individualmente (acesso_recuperacao)."""
+    return user.get("papel") in ("admin", "gerente") or bool(user.get("acesso_recuperacao"))
+
+
 def user_publico(u):
     return {"id": u["id"], "nome": u["nome"], "login": u["login"],
             "papel": u["papel"], "ativo": u.get("ativo", True),
             "senha_definida": bool(u.get("senha_hash")),
-            "senha_padrao": bool(u.get("senha_padrao"))}
+            "senha_padrao": bool(u.get("senha_padrao")),
+            "acesso_recuperacao": bool(u.get("acesso_recuperacao")),
+            "pode_recuperacao": pode_recuperacao(u)}
 
 
 def settings_publico():
@@ -1789,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                             if alvo["id"] == user["id"] and not body["ativo"]:
                                 return self.send_json(400, {"error": "Você não pode desativar a si mesmo"})
                             alvo["ativo"] = bool(body["ativo"])
+                        if "acesso_recuperacao" in body:
+                            alvo["acesso_recuperacao"] = bool(body["acesso_recuperacao"])
                         if body.get("senha"):
                             if len(str(body["senha"])) < 6:
                                 return self.send_json(400, {"error": "Senha muito curta (mínimo 6 caracteres)"})
@@ -1813,14 +1823,16 @@ class Handler(BaseHTTPRequestHandler):
             escopo = (qs.get("escopo") or ["atuais"])[0]
             with _lock:
                 todos_visiveis = [l for l in _db["leads"] if pode_ver_lead(user, l)]
-                # contagens dos lotes (para os botoes Atuais/Recuperacao/Servicos)
-                n_recuperacao = sum(1 for l in todos_visiveis if l.get("recuperacao"))
+                # contagens dos lotes (para os botoes Atuais/Recuperacao/Servicos).
+                # Recuperacao so conta/aparece para quem tem acesso liberado.
+                pode_rec = pode_recuperacao(user)
+                n_recuperacao = sum(1 for l in todos_visiveis if l.get("recuperacao")) if pode_rec else 0
                 n_servicos = sum(1 for l in todos_visiveis if l.get("em_servicos"))
-                n_atuais = len(todos_visiveis) - n_recuperacao
+                n_atuais = sum(1 for l in todos_visiveis if not l.get("recuperacao"))
                 if escopo == "servicos":
                     visiveis = [l for l in todos_visiveis if l.get("em_servicos")]
                 elif escopo == "recuperacao":
-                    visiveis = [l for l in todos_visiveis if l.get("recuperacao")]
+                    visiveis = [l for l in todos_visiveis if l.get("recuperacao")] if pode_rec else []
                 else:
                     visiveis = [l for l in todos_visiveis if not l.get("recuperacao")]
                 por_status = {s: {"count": 0, "valor": 0} for s in STAGES}
@@ -2146,7 +2158,8 @@ class Handler(BaseHTTPRequestHandler):
             if escopo == "servicos":
                 leads = [l for l in leads if l.get("em_servicos")]
             elif escopo == "recuperacao":
-                leads = [l for l in leads if l.get("recuperacao")]
+                # só quem tem acesso liberado vê a Recuperação
+                leads = [l for l in leads if l.get("recuperacao")] if pode_recuperacao(user) else []
             else:
                 leads = [l for l in leads if not l.get("recuperacao")]
             if q:

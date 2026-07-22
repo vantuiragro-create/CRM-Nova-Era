@@ -2374,6 +2374,25 @@ async function renderTeam() {
     };
     row.append(nivel);
 
+    // acesso ao painel de Recuperação (só faz sentido p/ SDR e vendedor —
+    // admin/gerente sempre têm)
+    if (u.papel === 'sdr' || u.papel === 'vendedor') {
+      const rec = el('button', 'recup-btn' + (u.acesso_recuperacao ? ' on' : ''),
+        u.acesso_recuperacao ? '🔄 Recuperação: liberado' : '🔄 Recuperação: bloqueado');
+      rec.type = 'button';
+      rec.title = u.acesso_recuperacao
+        ? 'Tem acesso à Recuperação — clique para bloquear'
+        : 'Sem acesso à Recuperação — clique para liberar';
+      rec.onclick = async () => {
+        try {
+          await api('/api/users/' + u.id, { method: 'PATCH', body: JSON.stringify({ acesso_recuperacao: !u.acesso_recuperacao }) });
+          toast('Recuperação de ' + u.nome + (u.acesso_recuperacao ? ' → bloqueado' : ' → liberado'));
+          renderTeam();
+        } catch (err) { toast('Erro: ' + err.message); }
+      };
+      row.append(rec);
+    }
+
     const senha = el('button', 'icon-btn', '🔑');
     senha.title = 'Definir nova senha';
     senha.type = 'button';
@@ -2767,6 +2786,8 @@ function applyRoleUI() {
   $('#btnCampaigns').hidden = !gestor;
   $('#btnAlertas').hidden = !gestor;
   $('#btnUsers').hidden = me.papel !== 'admin';
+  // botão "Recuperação" só para quem tem acesso liberado (admin/gerente sempre)
+  $('#escRecup').hidden = !me.pode_recuperacao;
   // aviso de senha padrão (só para o admin que ainda não trocou)
   if (me.senha_padrao) {
     const aviso = $('#senhaPadraoAviso');
