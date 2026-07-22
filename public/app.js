@@ -64,6 +64,27 @@ const FUNIS = {
 };
 const SALES = ['qualificado', 'decidindo', 'negociacao', 'proposta', 'financiamento', 'ganho'];
 
+// Painel de SERVIÇOS (pós-venda): o cliente que comprou o drone entra aqui em
+// paralelo. As colunas usam `status_servico` (não `status`).
+const SCOL = {
+  recebido_serv: { key: 'recebido_serv', label: '🔧 Cliente com drone', patch: { status_servico: 'recebido_serv' }, match: (l) => l.status_servico === 'recebido_serv' },
+  ofertado: { key: 'ofertado', label: '📞 Ofereci o serviço', patch: { status_servico: 'ofertado' }, match: (l) => l.status_servico === 'ofertado' },
+  negociando_serv: { key: 'negociando_serv', label: '💬 Negociando', patch: { status_servico: 'negociando_serv' }, match: (l) => l.status_servico === 'negociando_serv' },
+  proposta_serv: { key: 'proposta_serv', label: '📄 Proposta enviada', patch: { status_servico: 'proposta_serv' }, match: (l) => l.status_servico === 'proposta_serv' },
+  vendido_serv: { key: 'vendido_serv', label: '🏆 Serviço vendido', patch: { status_servico: 'vendido_serv' }, match: (l) => l.status_servico === 'vendido_serv' },
+  recusado_serv: { key: 'recusado_serv', label: '❌ Não quis', patch: { status_servico: 'recusado_serv' }, match: (l) => l.status_servico === 'recusado_serv' },
+};
+FUNIS.servicos = {
+  papel: 'vendedor', campo: 'vendedor', servico: true,
+  colunas: [SCOL.recebido_serv, SCOL.ofertado, SCOL.negociando_serv, SCOL.proposta_serv, SCOL.vendido_serv, SCOL.recusado_serv],
+  inclui: (l) => !!l.em_servicos,
+};
+const SERVICO_LABEL = {
+  recebido_serv: '🔧 Cliente com drone', ofertado: '📞 Ofereci o serviço',
+  negociando_serv: '💬 Negociando', proposta_serv: '📄 Proposta enviada',
+  vendido_serv: '🏆 Serviço vendido', recusado_serv: '❌ Não quis',
+};
+
 let leadsCache = [];
 let primeiroLoadFeito = false; // só avisa "nada encontrado" depois do 1º carregamento
 let members = [];
@@ -388,7 +409,7 @@ async function loadStats() {
     // pode ser só do gestor); mantém os badges corretos para os vendedores também
     if (s.cadencia_dias) settings.cadencia_dias = s.cadencia_dias;
     if (s.resposta_horas) settings.resposta_horas = s.resposta_horas;
-    atualizaEscopoSwitch(s.atuais_total, s.recuperacao_total);
+    atualizaEscopoSwitch(s.atuais_total, s.recuperacao_total, s.servicos_total);
     const box = $('#stats');
     box.innerHTML = '';
     const cards = [
@@ -399,8 +420,9 @@ async function loadStats() {
       { n: (s.por_status.ganho || {}).count || 0, l: '🏆 Ganhos' },
       { n: brl(s.valor_pipeline), l: '💰 Pipeline' },
     ];
-    // só aparece quando há alertas (mantém a barra enxuta); clica p/ abrir a central
-    if (s.alertas) {
+    // só aparece quando há alertas (mantém a barra enxuta); clica p/ abrir a
+    // central. No painel de Serviços não faz sentido (evita beco sem saída).
+    if (s.alertas && escopo !== 'servicos') {
       cards.push({ n: s.alertas, l: '🔔 Alertas', cls: 'wait', acao: abrirAlertas });
     }
     for (const c of cards) {
@@ -444,7 +466,7 @@ function leadsDaVisao() {
 function leadsNaVisao() { return leadsDaVisao().length; }
 const VIEW_LABEL = {
   sdr: 'Funil SDR', produtor: 'Produtores', pecuarista: 'Pecuaristas', prestador: 'Prestadores',
-  perdidos: 'Perdido p/ concorrente', desistiu: 'Desistiu', map: 'Mapa',
+  perdidos: 'Perdido p/ concorrente', desistiu: 'Desistiu', map: 'Mapa', servicos: 'Serviços',
 };
 // resultados terminais que a ação em massa nunca deve alterar
 const STATUS_ENCERRADOS = ['ganho', 'perdido', 'desistiu', 'curioso'];
@@ -877,24 +899,29 @@ function setView(view) {
   }
 }
 
-// Escopo: "Atuais" (funil dos leads novos) x "Recuperação" (clientes antigos).
-// Um botão troca o app inteiro entre os dois lotes, sem misturar.
-function atualizaEscopoSwitch(nAtuais, nRecup) {
-  const a = $('#escAtuais'); const r = $('#escRecup');
-  if (a) a.classList.toggle('active', escopo === 'atuais');
-  if (r) r.classList.toggle('active', escopo === 'recuperacao');
+// Escopo: "Atuais" (funil de drones dos leads novos) x "Recuperação" (clientes
+// antigos) x "Serviços" (pós-venda). Um botão troca o app inteiro entre os lotes.
+function atualizaEscopoSwitch(nAtuais, nRecup, nServ) {
+  $('#escAtuais').classList.toggle('active', escopo === 'atuais');
+  $('#escRecup').classList.toggle('active', escopo === 'recuperacao');
+  $('#escServ').classList.toggle('active', escopo === 'servicos');
   document.body.classList.toggle('modo-recuperacao', escopo === 'recuperacao');
-  const badge = $('#escRecupBadge');
-  if (badge && nRecup != null) {
-    if (nRecup > 0) { badge.hidden = false; badge.textContent = nRecup; }
-    else badge.hidden = true;
-  }
+  document.body.classList.toggle('modo-servicos', escopo === 'servicos');
+  // no painel de Serviços as abas de funil de drone não se aplicam
+  $('#viewTabs').hidden = (escopo === 'servicos');
+  const badge = (id, n) => { const b = $(id); if (b && n != null) { if (n > 0) { b.hidden = false; b.textContent = n; } else b.hidden = true; } };
+  badge('#escRecupBadge', nRecup);
+  badge('#escServBadge', nServ);
 }
 async function setEscopo(novo) {
   if (novo === escopo) return;
+  const saindoServicos = (escopo === 'servicos');
   escopo = novo;
-  atualizaEscopoSwitch();      // troca visual imediata
-  await refreshAll();          // recarrega leads + stats no novo lote (stats atualiza o badge)
+  atualizaEscopoSwitch();      // troca visual imediata (esconde abas de drone em Serviços)
+  // Serviços tem funil próprio; ao entrar/sair, ajusta a visão (mostra o board certo)
+  if (novo === 'servicos') setView('servicos');
+  else if (saindoServicos) setView('produtor');
+  await refreshAll();          // recarrega leads + stats no novo lote (atualiza os badges)
 }
 
 // Lista de casos encerrados (perdido / desistiu) para resgate. Uma função só
@@ -1257,7 +1284,12 @@ function renderCard(lead) {
   const tags = el('div', 'tags');
   if (lead.origem_canal) tags.append(el('span', `tag canal ${lead.origem_canal}`, lead.origem_canal));
   if (lead.campanha) tags.append(el('span', 'tag campanha', '📣 ' + lead.campanha));
-  if (lead.valor > 0) tags.append(el('span', 'tag valor', brl(lead.valor)));
+  if (escopo === 'servicos') {
+    // no painel de Serviços o valor relevante é o do serviço (não o do drone)
+    if (lead.valor_servico > 0) tags.append(el('span', 'tag valor serv', '🔧 ' + brl(lead.valor_servico)));
+  } else if (lead.valor > 0) {
+    tags.append(el('span', 'tag valor', brl(lead.valor)));
+  }
   if (tags.children.length) card.append(tags);
 
   card.addEventListener('dragstart', (e) => {
@@ -1279,7 +1311,7 @@ async function dropLead(id, lane, col, funil) {
   // a raia define quem é o dono neste funil (SDR ou vendedor)
   patch[funil.campo] = lane.isNone ? '' : lane.nome;
 
-  const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo, aguardando_resposta: lead.aguardando_resposta };
+  const before = { status: lead.status, sdr: lead.sdr, vendedor: lead.vendedor, tipo: lead.tipo, aguardando_resposta: lead.aguardando_resposta, status_servico: lead.status_servico };
   Object.assign(lead, patch);
   // encerrar o lead tira o alerta na hora (o servidor faz o mesmo no PATCH)
   if (['ganho', 'perdido', 'desistiu', 'curioso'].includes(lead.status)) lead.aguardando_resposta = null;
@@ -1352,6 +1384,8 @@ function openModal(lead) {
   for (const r of form.querySelectorAll('[name=tipo]')) r.checked = (r.value === (lead.tipo || ''));
   // lead de recuperação (checkbox) — lead novo herda o escopo em que você está
   if (form.recuperacao) form.recuperacao.checked = isNew ? (escopo === 'recuperacao') : !!lead.recuperacao;
+  // painel de serviços (pós-venda) — lead novo criado nesse painel já entra nele
+  if (form.em_servicos) form.em_servicos.checked = isNew ? (escopo === 'servicos') : !!lead.em_servicos;
 
   form.id.value = lead.id || '';
   // canal fora da lista fixa (ex.: utm_source cru vindo do webhook): injeta a
@@ -1360,7 +1394,7 @@ function openModal(lead) {
     form.origem_canal.append(new Option(lead.origem_canal, lead.origem_canal));
   }
   const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'valor',
-    'cargo', 'decisor', 'decisor_cargo',
+    'cargo', 'decisor', 'decisor_cargo', 'status_servico', 'valor_servico',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
   atualizaWaLead();
@@ -2445,6 +2479,7 @@ $('#tabDesistiu').addEventListener('click', () => setView('desistiu'));
 $('#tabMap').addEventListener('click', () => setView('map'));
 $('#escAtuais').addEventListener('click', () => setEscopo('atuais'));
 $('#escRecup').addEventListener('click', () => setEscopo('recuperacao'));
+$('#escServ').addEventListener('click', () => setEscopo('servicos'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento
 form.valor.addEventListener('input', updatePayTotal);

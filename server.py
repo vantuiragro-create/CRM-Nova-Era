@@ -66,6 +66,11 @@ STAGES = ["novo", "triagem", "qualificado", "decidindo", "negociacao", "proposta
 SALES_STAGES = ("qualificado", "decidindo", "negociacao", "proposta",
                 "financiamento", "ganho")
 
+# Painel de SERVIÇOS (pós-venda): depois de vender o drone (ganho), o cliente
+# entra num funil separado de venda de serviços/pecas/manutencao.
+SERVICO_STAGES = ("recebido_serv", "ofertado", "negociando_serv",
+                  "proposta_serv", "vendido_serv", "recusado_serv")
+
 # Papeis da equipe (raias dos funis)
 PAPEIS = ("sdr", "vendedor")
 
@@ -84,6 +89,7 @@ EDITABLE = {
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
     "utm_term", "status", "observacoes", "lat", "lng", "recuperacao",
+    "em_servicos", "status_servico", "valor_servico",
 }
 
 # Canais aceitos para campanhas cadastradas
@@ -358,6 +364,9 @@ def load_db():
                 # leads que ja existiam ANTES desta versao sao o lote de
                 # recuperacao (clientes do passado); os novos nascem como atuais.
                 l.setdefault("recuperacao", True)
+                l.setdefault("em_servicos", False)
+                l.setdefault("status_servico", "")
+                l.setdefault("valor_servico", 0)
                 if not isinstance(l.get("visitas"), list):
                     l["visitas"] = []
                 if not isinstance(l.get("historico"), list):
@@ -426,6 +435,9 @@ def make_lead(partial=None):
         "status": "novo",
         "recuperacao": False,  # True = cliente antigo em recuperacao (fica na aba
                                # "Recuperacao", fora do funil dos leads NOVOS)
+        "em_servicos": False,  # True = tambem esta no painel de Servicos (pos-venda)
+        "status_servico": "",  # etapa no funil de Servicos (SERVICO_STAGES)
+        "valor_servico": 0,    # valor do negocio de servicos (separado do drone)
         "observacoes": "",
         "lat": None,   # localizacao exata da fazenda (ajustada no mapa);
         "lng": None,   # None = usar o centro da cidade (regiao) como aproximacao
@@ -617,6 +629,10 @@ def descreve_mudancas(antes, depois, campos):
             itens.append("📞 SDR: %s" % (d or "(removido)"))
         elif k == "itens":
             itens.append("📦 Pedido (drones) atualizado")
+        elif k == "status_servico":
+            itens.append("🔧 Serviços — etapa: %s" % (d or "—"))
+        elif k == "valor_servico":
+            itens.append("🔧 Serviços — valor: R$ %s" % ("{:,.0f}".format(float(d or 0)).replace(",", ".")))
         elif k == "formas_pagamento":
             itens.append("💳 Forma de pagamento atualizada")
         elif k == "observacoes":
@@ -659,6 +675,25 @@ def apply_updates(lead, updates):
             continue
         if key == "recuperacao":
             lead["recuperacao"] = bool(value)
+            continue
+        if key == "em_servicos":
+            lead["em_servicos"] = bool(value)
+            if lead["em_servicos"] and not lead.get("status_servico"):
+                lead["status_servico"] = SERVICO_STAGES[0]  # entrou -> primeira etapa
+            continue
+        if key == "status_servico":
+            if value in SERVICO_STAGES:
+                lead["status_servico"] = value
+                lead["em_servicos"] = True  # ter etapa de servico = estar no painel
+            elif value == "":
+                lead["status_servico"] = ""
+            continue
+        if key == "valor_servico":
+            try:
+                vs = float(value) if value not in ("", None) else 0.0
+            except (TypeError, ValueError):
+                vs = 0.0
+            lead["valor_servico"] = vs if math.isfinite(vs) and vs >= 0 else 0.0
             continue
         if key == "regiao" and value and _CIDADES_CANON:
             canon = canon_cidade(value)
@@ -707,6 +742,11 @@ def apply_updates(lead, updates):
     # para o relatorio nao depender de updated_at (que muda com nota/visita/edicao).
     if lead.get("status") == "ganho" and status_antes != "ganho":
         lead["ganho_em"] = now_iso()
+        # vendeu o drone -> entra AUTOMATICAMENTE no painel de Servicos (pos-venda),
+        # sem sair do funil de drones (o ganho continua contando).
+        if not lead.get("em_servicos"):
+            lead["em_servicos"] = True
+            lead["status_servico"] = SERVICO_STAGES[0]
     if lead.get("status") == "perdido" and status_antes != "perdido":
         lead["perdido_em"] = now_iso()
     if lead.get("status") == "desistiu" and status_antes != "desistiu":
@@ -737,6 +777,15 @@ def apply_updates(lead, updates):
                 lead["origem_canal"] = camp.get("canal", "")
         else:
             lead["campanha_id"] = ""
+
+    # Invariante do painel de Serviços: dentro do painel SEMPRE há uma etapa
+    # válida (senão o card ficaria contado mas invisível); fora do painel, etapa
+    # vazia. em_servicos manda; a etapa se ajusta.
+    if lead.get("em_servicos"):
+        if lead.get("status_servico") not in SERVICO_STAGES:
+            lead["status_servico"] = SERVICO_STAGES[0]
+    else:
+        lead["status_servico"] = ""
 
     lead["updated_at"] = now_iso()
     return lead
@@ -1764,10 +1813,13 @@ class Handler(BaseHTTPRequestHandler):
             escopo = (qs.get("escopo") or ["atuais"])[0]
             with _lock:
                 todos_visiveis = [l for l in _db["leads"] if pode_ver_lead(user, l)]
-                # contagens dos dois lotes (para o botao Atuais/Recuperacao)
+                # contagens dos lotes (para os botoes Atuais/Recuperacao/Servicos)
                 n_recuperacao = sum(1 for l in todos_visiveis if l.get("recuperacao"))
+                n_servicos = sum(1 for l in todos_visiveis if l.get("em_servicos"))
                 n_atuais = len(todos_visiveis) - n_recuperacao
-                if escopo == "recuperacao":
+                if escopo == "servicos":
+                    visiveis = [l for l in todos_visiveis if l.get("em_servicos")]
+                elif escopo == "recuperacao":
                     visiveis = [l for l in todos_visiveis if l.get("recuperacao")]
                 else:
                     visiveis = [l for l in todos_visiveis if not l.get("recuperacao")]
@@ -1799,6 +1851,7 @@ class Handler(BaseHTTPRequestHandler):
                     "alertas": aguardando + retornos,
                     "atuais_total": n_atuais,
                     "recuperacao_total": n_recuperacao,
+                    "servicos_total": n_servicos,
                     "cadencia_dias": _cad,
                     "resposta_horas": resposta_horas_cfg(),
                     "cidades": cidades,
@@ -2088,8 +2141,11 @@ class Handler(BaseHTTPRequestHandler):
 
             with _lock:
                 leads = [l for l in _db["leads"] if pode_ver_lead(user, l)]
-            # separa o lote de recuperacao (clientes antigos) dos leads atuais
-            if escopo == "recuperacao":
+            # separa os lotes: recuperacao (antigos), servicos (pos-venda, em
+            # paralelo) e atuais (funil de drones dos leads novos).
+            if escopo == "servicos":
+                leads = [l for l in leads if l.get("em_servicos")]
+            elif escopo == "recuperacao":
                 leads = [l for l in leads if l.get("recuperacao")]
             else:
                 leads = [l for l in leads if not l.get("recuperacao")]

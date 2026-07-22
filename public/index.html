@@ -73,8 +73,9 @@
     <div class="escopo-switch" id="escopoSwitch" role="tablist" aria-label="Escopo dos leads">
       <button type="button" class="escopo-opt active" id="escAtuais" data-escopo="atuais">📊 Atuais</button>
       <button type="button" class="escopo-opt" id="escRecup" data-escopo="recuperacao">🔄 Recuperação<span class="escopo-badge" id="escRecupBadge" hidden></span></button>
+      <button type="button" class="escopo-opt" id="escServ" data-escopo="servicos">🔧 Serviços<span class="escopo-badge serv" id="escServBadge" hidden></span></button>
     </div>
-    <div class="view-tabs" role="tablist">
+    <div class="view-tabs" id="viewTabs" role="tablist">
       <button class="view-tab active" id="tabSDR" role="tab">📞 Funil SDR</button>
       <button class="view-tab" id="tabProdutor" role="tab">🌾 Produtores</button>
       <button class="view-tab" id="tabPecuarista" role="tab">🐄 Pecuaristas</button>
@@ -217,6 +218,23 @@
           <div class="section-title full">💰 Forma de pagamento <small class="req-hint">(pode combinar — pagamento misto)</small></div>
           <div class="full pay-box" id="payBox"><!-- gerado via JS --></div>
           <div class="full pay-total" id="payTotal"></div>
+
+          <div class="section-title full">🔧 Serviços (pós-venda)</div>
+          <label class="recup-toggle full"><input type="checkbox" name="em_servicos" /> <span>Cliente no painel de Serviços (peças/manutenção)</span></label>
+          <label>Etapa do serviço
+            <select name="status_servico">
+              <option value="">—</option>
+              <option value="recebido_serv">🔧 Cliente com drone</option>
+              <option value="ofertado">📞 Ofereci o serviço</option>
+              <option value="negociando_serv">💬 Negociando</option>
+              <option value="proposta_serv">📄 Proposta enviada</option>
+              <option value="vendido_serv">🏆 Serviço vendido</option>
+              <option value="recusado_serv">❌ Não quis</option>
+            </select>
+          </label>
+          <label>Valor do serviço (R$)
+            <input name="valor_servico" type="number" min="0" step="100" placeholder="0" />
+          </label>
 
           <div class="section-title full">Responsáveis</div>
           <label>SDR (primeiro contato)
