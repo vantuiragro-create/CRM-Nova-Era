@@ -474,7 +474,13 @@ body {
 .item-row .item-qtd { width: 62px; font: inherit; font-size: 13px; padding: 7px 6px; border: 1px solid var(--line); border-radius: 8px; text-align: center; }
 .item-row .item-x { border: 1px solid var(--line); background: #fff; color: var(--muted); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 13px; flex-shrink: 0; }
 .item-row .item-x:hover { border-color: #e0a3a3; color: #b02a1f; }
-#btnAddItem.small { padding: 6px 10px; font-size: 12px; }
+#btnAddItem {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; font-size: 13px; font-weight: 700;
+  color: var(--green-700); background: var(--green-100);
+  border: 1.5px dashed var(--green-500); border-radius: 9px; cursor: pointer;
+}
+#btnAddItem:hover { background: #dff1e4; }
 /* linha do pedido no card */
 .card .row.pedido { color: var(--ink); font-weight: 700; align-items: flex-start; }
 .card .row.pedido .pedido-qtd { margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--green-700); background: var(--green-100); border: 1px solid var(--green-500); border-radius: 6px; padding: 0 6px; white-space: nowrap; }

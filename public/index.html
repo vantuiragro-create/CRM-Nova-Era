@@ -15,8 +15,27 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Nova Era" />
   <meta name="theme-color" content="#00303c" />
-  <!-- Service Worker: deixa o CRM abrir e registrar visitas/notas offline (campo sem sinal) -->
-  <script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {})); }</script>
+  <!-- Service Worker: abre/registra offline no campo E mantém o app sempre na
+       versão mais nova (recarrega sozinho quando uma atualização assume). -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      // se JÁ existe um SW controlando, uma troca = versão nova assumiu -> recarrega 1x
+      if (navigator.serviceWorker.controller) {
+        var _recarregando = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (_recarregando) return;
+          _recarregando = true;
+          window.location.reload();
+        });
+      }
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js').then(function (reg) {
+          reg.update && reg.update();           // procura atualização a cada abertura
+          setInterval(function () { reg.update && reg.update(); }, 60 * 60 * 1000);
+        }).catch(function () {});
+      });
+    }
+  </script>
 </head>
 <body>
   <!-- barra de status offline / envio pendente (controlada pelo app.js) -->
@@ -182,7 +201,7 @@
           <div class="full">
             <div class="pedido-head">🚁 Drones do pedido <small class="req-hint">(pode adicionar mais de um)</small></div>
             <div id="itensBox" class="itens-box"><!-- linhas geradas via JS --></div>
-            <button type="button" class="btn ghost small" id="btnAddItem">+ Adicionar drone</button>
+            <button type="button" id="btnAddItem">➕ Adicionar outro drone</button>
           </div>
           <label>Valor total estimado (R$)
             <input name="valor" type="number" min="0" step="100" placeholder="0" />

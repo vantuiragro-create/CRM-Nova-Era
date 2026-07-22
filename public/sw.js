@@ -4,7 +4,7 @@
  * POST/PATCH/DELETE (a fila offline do app cuida das escritas) nem outros dominios
  * (tiles de mapa de satelite). Bump CACHE_VER a cada deploy que precise limpar o
  * cache do shell. */
-const CACHE_VER = 'nova-era-v1';
+const CACHE_VER = 'nova-era-v2';
 const SHELL = [
   '/', '/index.html', '/login.html', '/app.js', '/styles.css', '/manifest.json',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css',
