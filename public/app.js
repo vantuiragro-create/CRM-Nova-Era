@@ -788,7 +788,8 @@ function renderMap() {
     nome.append(document.createTextNode(lead.nome || '(sem nome)'));
     pop.append(nome);
     if (lead.regiao) pop.append(el('div', 'pp-linha', '📍 ' + lead.regiao + (loc.exato ? ' · fazenda exata' : ' · local aproximado')));
-    if (lead.produto) pop.append(el('div', 'pp-linha', '📦 ' + lead.produto));
+    const pedidoPop = resumoItens(lead);
+    if (pedidoPop) pop.append(el('div', 'pp-linha', '📦 ' + pedidoPop));
     if (lead.valor > 0) pop.append(el('div', 'pp-linha', '💰 ' + brl(lead.valor)));
     const resp = lead.vendedor || lead.sdr;
     if (resp) pop.append(el('div', 'pp-linha', '👤 ' + resp));
@@ -1176,7 +1177,14 @@ function renderCard(lead) {
   }
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
-  if (lead.produto) { const r = el('div', 'row'); r.append(el('span', 'ic', '📦'), document.createTextNode(lead.produto)); card.append(r); }
+  const pedido = resumoItens(lead);
+  if (pedido) {
+    const r = el('div', 'row pedido');
+    r.append(el('span', 'ic', '📦'), document.createTextNode(pedido));
+    const nD = totalDrones(lead);
+    if (nD > 1) r.append(el('span', 'pedido-qtd', nD + ' drones'));
+    card.append(r);
+  }
   // responsáveis: vendedor (destaque) e SDR
   if (lead.vendedor) {
     const r = el('div', 'row resp-vend');
@@ -1326,15 +1334,18 @@ function openModal(lead) {
   if (lead.origem_canal && ![...form.origem_canal.options].some((o) => o.value === lead.origem_canal)) {
     form.origem_canal.append(new Option(lead.origem_canal, lead.origem_canal));
   }
-  // mesmo tratamento para produto vindo do webhook fora da linha padrão
-  if (lead.produto && ![...form.produto.options].some((o) => o.value === lead.produto)) {
-    form.produto.append(new Option(lead.produto, lead.produto));
-  }
-  const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'produto', 'valor',
+  const fields = ['nome', 'telefone', 'email', 'regiao', 'area_cultivada', 'valor',
     'cargo', 'decisor', 'decisor_cargo',
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
   atualizaWaLead();
+
+  // drones do pedido (lead antigo: cai no produto único; lead sem nada: 1 linha vazia)
+  const itensIni = (lead.itens && lead.itens.length)
+    ? lead.itens
+    : (PRODUTOS.includes(lead.produto) ? [{ produto: lead.produto, qtd: 1 }] : []);
+  renderItens(itensIni);
+  modalItensInitial = JSON.stringify(canonItens(itensIni));
 
   renderPagamentos(lead.formas_pagamento || []);
   modalPagInitial = JSON.stringify(canonPagamentos(lead.formas_pagamento || []));
@@ -1387,8 +1398,68 @@ function collectFormValues() {
 }
 let modalInitial = {};
 let modalPagInitial = '[]';
+let modalItensInitial = '[]';
 
 // ---- Forma de pagamento (multi + valor + parcelamento) ----
+// ---- Drones do pedido (o cliente pode querer mais de um) ----
+// Texto do pedido para o card/popup: "2× T25P · T70P". Cai no produto legado
+// quando ainda não há itens (lead antigo do webhook com produto solto).
+function resumoItens(lead) {
+  const itens = (lead && lead.itens) || [];
+  if (itens.length) return itens.map((it) => (it.qtd > 1 ? it.qtd + '× ' : '') + it.produto).join(' · ');
+  return (lead && lead.produto) || '';
+}
+function totalDrones(lead) {
+  return ((lead && lead.itens) || []).reduce((a, it) => a + (Number(it.qtd) || 0), 0);
+}
+
+function criaItemRow(produto, qtd) {
+  const row = el('div', 'item-row');
+  const sel = document.createElement('select');
+  sel.className = 'item-prod';
+  sel.append(new Option('— escolher drone —', ''));
+  for (const p of PRODUTOS) sel.append(new Option(p, p));
+  sel.value = PRODUTOS.includes(produto) ? produto : '';
+  const q = document.createElement('input');
+  q.type = 'number'; q.min = '1'; q.max = '99'; q.step = '1';
+  q.className = 'item-qtd'; q.value = qtd > 0 ? qtd : 1;
+  q.setAttribute('aria-label', 'quantidade');
+  const x = el('button', 'item-x', '✕');
+  x.type = 'button'; x.title = 'Remover drone';
+  x.onclick = () => {
+    row.remove();
+    // nunca deixa o pedido sem nenhuma linha (mantém uma vazia para adicionar)
+    if (!$('#itensBox').querySelector('.item-row')) $('#itensBox').append(criaItemRow('', 1));
+  };
+  row.append(sel, el('span', 'item-vezes', '×'), q, x);
+  return row;
+}
+function renderItens(itens) {
+  const box = $('#itensBox');
+  box.innerHTML = '';
+  const lista = (itens && itens.length) ? itens : [{ produto: '', qtd: 1 }];
+  for (const it of lista) box.append(criaItemRow(it.produto, it.qtd));
+}
+function collectItens() {
+  const out = [];
+  for (const row of $('#itensBox').querySelectorAll('.item-row')) {
+    const prod = row.querySelector('.item-prod').value;
+    if (!prod) continue;
+    const qtd = Math.max(1, Math.min(99, parseInt(row.querySelector('.item-qtd').value, 10) || 1));
+    out.push({ produto: prod, qtd });
+  }
+  return out;
+}
+// forma canônica (soma repetidos + ordena) só para detectar "mudou ou não"
+function canonItens(lista) {
+  const somas = {};
+  for (const it of (lista || [])) {
+    if (!it.produto) continue;
+    somas[it.produto] = Math.min(99, (somas[it.produto] || 0) + (Number(it.qtd) || 1));
+  }
+  return Object.keys(somas).sort().map((p) => ({ produto: p, qtd: somas[p] }));
+}
+
 function renderPagamentos(lista) {
   const box = $('#payBox');
   box.innerHTML = '';
@@ -1545,6 +1616,9 @@ async function saveLead() {
   for (const [k, v] of Object.entries(all)) {
     if (!id || v !== (modalInitial[k] !== undefined ? modalInitial[k] : '')) data[k] = v;
   }
+  // drones do pedido (não é campo simples do form) — só reenvia se mudou
+  const its = collectItens();
+  if (!id || JSON.stringify(canonItens(its)) !== modalItensInitial) data.itens = its;
   // formas de pagamento (não é campo simples do form) — compara canônico para
   // não reenviar (e evitar reverter mudança concorrente) quando nada mudou
   const pg = collectPagamentos();
@@ -2346,6 +2420,9 @@ $('#tabMap').addEventListener('click', () => setView('map'));
 
 // mudar o valor do lead recalcula as parcelas das formas de pagamento
 form.valor.addEventListener('input', updatePayTotal);
+// adiciona mais um drone ao pedido
+const btnAddItem = $('#btnAddItem');
+if (btnAddItem) btnAddItem.addEventListener('click', () => $('#itensBox').append(criaItemRow('', 1)));
 // link "Abrir no WhatsApp" ao lado do telefone (atualiza ao digitar)
 function atualizaWaLead() {
   const a = $('#waLead');

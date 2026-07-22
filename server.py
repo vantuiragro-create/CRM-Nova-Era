@@ -79,7 +79,7 @@ PAPEIS_USUARIO = ("admin", "gerente", "vendedor", "sdr")
 SESSAO_DIAS = 30
 
 EDITABLE = {
-    "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "valor",
+    "nome", "telefone", "email", "regiao", "area_cultivada", "produto", "itens", "valor",
     "cargo", "decisor", "decisor_cargo", "formas_pagamento",
     "vendedor", "sdr", "responsavel", "tipo", "origem_canal", "campanha",
     "campanha_id", "utm_source", "utm_medium", "utm_campaign", "utm_content",
@@ -352,6 +352,9 @@ def load_db():
                     l["desistiu_em"] = l.get("updated_at") or l.get("created_at")
                 if not isinstance(l.get("formas_pagamento"), list):
                     l["formas_pagamento"] = []
+                if not isinstance(l.get("itens"), list):
+                    # lead antigo tinha um produto unico -> vira 1 item do pedido
+                    l["itens"] = itens_de_produto(l.get("produto"))
                 if not isinstance(l.get("visitas"), list):
                     l["visitas"] = []
                 if not isinstance(l.get("historico"), list):
@@ -394,7 +397,8 @@ def make_lead(partial=None):
         "email": "",
         "regiao": "",
         "area_cultivada": "",
-        "produto": "",
+        "produto": "",       # espelho (nomes juntos) dos itens — busca/legado
+        "itens": [],         # drones do pedido: lista de {produto, qtd}
         "valor": 0,
         "cargo": "",          # cargo de QUEM entrou em contato
         "decisor": "",        # quem decide/paga (vazio = o proprio contato)
@@ -500,6 +504,43 @@ def sanitiza_pagamentos(value):
     return out
 
 
+def sanitiza_itens(value):
+    """Aceita uma lista de {produto, qtd} (os drones do pedido); mantem so
+    produtos validos, SOMA quantidades de um produto repetido e limita 1..99."""
+    if not isinstance(value, list):
+        return []
+    somas, ordem = {}, []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        prod = str(item.get("produto") or "").strip()
+        if prod not in PRODUTOS:
+            continue
+        try:
+            qf = float(item.get("qtd") or 1)
+            q = int(qf) if math.isfinite(qf) else 1  # inf/NaN (via API) não podem estourar
+        except (TypeError, ValueError):
+            q = 1
+        q = max(1, min(99, q))
+        if prod not in somas:
+            somas[prod] = 0
+            ordem.append(prod)
+        somas[prod] = min(99, somas[prod] + q)
+    return [{"produto": p, "qtd": somas[p]} for p in ordem]
+
+
+def resumo_produtos(itens):
+    """Nomes dos produtos do pedido, juntos — usado na busca e como espelho do
+    campo legado `produto`. Ex.: [T25P x2, T70P] -> 'T25P, T70P'."""
+    return ", ".join(it["produto"] for it in (itens or []) if it.get("produto"))
+
+
+def itens_de_produto(produto):
+    """Um produto unico (webhook/importacao/legado) vira uma lista de 1 item."""
+    p = str(produto or "").strip()
+    return [{"produto": p, "qtd": 1}] if p in PRODUTOS else []
+
+
 # ---------------------------------------------------------------------------
 # Historico (linha do tempo de atualizacoes do lead)
 # ---------------------------------------------------------------------------
@@ -569,6 +610,8 @@ def descreve_mudancas(antes, depois, campos):
             itens.append("👤 Vendedor: %s" % (d or "(removido)"))
         elif k == "sdr":
             itens.append("📞 SDR: %s" % (d or "(removido)"))
+        elif k == "itens":
+            itens.append("📦 Pedido (drones) atualizado")
         elif k == "formas_pagamento":
             itens.append("💳 Forma de pagamento atualizada")
         elif k == "observacoes":
@@ -594,8 +637,18 @@ def apply_updates(lead, updates):
             raise ValueError("%s é obrigatório e não pode ficar vazio" % campo)
         if key == "telefone" and str(value or "").strip() and len(norm_phone(value)) < 8:
             raise ValueError("Telefone inválido — informe DDD e número")
-        if key == "produto" and value and value not in PRODUTOS:
-            raise ValueError("Produto inválido — escolha um da lista")
+        if key == "produto":
+            # produto unico (import/webhook/legado): vira 1 item; itens e a fonte
+            if value and value not in PRODUTOS:
+                raise ValueError("Produto inválido — escolha um da lista")
+            lead["itens"] = itens_de_produto(value)
+            lead["produto"] = value if value in PRODUTOS else ""
+            continue
+        if key == "itens":
+            # os drones do pedido; `produto` vira o espelho (nomes juntos) p/ busca
+            lead["itens"] = sanitiza_itens(value)
+            lead["produto"] = resumo_produtos(lead["itens"])
+            continue
         if key == "formas_pagamento":
             lead["formas_pagamento"] = sanitiza_pagamentos(value)
             continue
@@ -837,7 +890,8 @@ def importar_csv(texto):
                 if prod and prod.lower() == p.lower():
                     prod = p
                     break
-            lead["produto"] = prod
+            lead["produto"] = prod if prod in PRODUTOS else ""
+            lead["itens"] = itens_de_produto(prod)
             lead["valor"] = _parse_valor_br(dados.get("valor"))
             lead["area_cultivada"] = dados.get("area_cultivada", "")
             lead["cargo"] = dados.get("cargo", "")
@@ -1290,6 +1344,7 @@ def handle_chatwoot_event(payload):
         "regiao": regiao,
         "area_cultivada": area,
         "produto": produto,
+        "itens": itens_de_produto(produto),
         "cargo": cargo,
         "decisor": decisor,
         "origem_canal": canal,
@@ -1381,6 +1436,10 @@ def handle_chatwoot_event(payload):
                     if d:
                         continue
                 lead[key] = value
+        # mantém o espelho `produto` (usado na busca) coerente com os itens do
+        # pedido — o merge acima trata as chaves soltas e poderia divergir.
+        if lead.get("itens"):
+            lead["produto"] = resumo_produtos(lead["itens"])
         lead["updated_at"] = now_iso()
         save_db()
         print("[webhook] lead atualizado: %s" % (lead.get("nome") or lead.get("telefone") or lead["id"]))
@@ -2017,7 +2076,10 @@ class Handler(BaseHTTPRequestHandler):
                 leads = [l for l in leads
                          if any(fp.get("tipo") == pagamento for fp in (l.get("formas_pagamento") or []))]
             if produto:
-                leads = [l for l in leads if l.get("produto") == produto]
+                # casa se QUALQUER drone do pedido for esse modelo (pedido com vários)
+                leads = [l for l in leads
+                         if any(it.get("produto") == produto for it in (l.get("itens") or []))
+                         or l.get("produto") == produto]
             if cidade:
                 leads = [l for l in leads if str(l.get("regiao") or "").strip() == cidade]
             if mesorregiao:

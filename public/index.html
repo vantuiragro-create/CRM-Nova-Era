@@ -179,17 +179,12 @@
           <label>Área cultivada
             <input name="area_cultivada" placeholder="Ex.: 500 ha" />
           </label>
-          <label>Produto de interesse
-            <select name="produto">
-              <option value="">—</option>
-              <option>T25P</option>
-              <option>T70P</option>
-              <option>T55</option>
-              <option>T100</option>
-              <option>Peças e Serviços</option>
-            </select>
-          </label>
-          <label>Valor estimado (R$)
+          <div class="full">
+            <div class="pedido-head">🚁 Drones do pedido <small class="req-hint">(pode adicionar mais de um)</small></div>
+            <div id="itensBox" class="itens-box"><!-- linhas geradas via JS --></div>
+            <button type="button" class="btn ghost small" id="btnAddItem">+ Adicionar drone</button>
+          </div>
+          <label>Valor total estimado (R$)
             <input name="valor" type="number" min="0" step="100" placeholder="0" />
           </label>
 

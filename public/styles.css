@@ -464,6 +464,20 @@ body {
 .pay-hint { font-size: 11.5px; font-weight: 700; color: var(--green-700); margin-top: 5px; min-height: 14px; }
 .pay-total { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 8px; }
 @media (max-width: 620px) { .pay-box { grid-template-columns: 1fr; } }
+
+/* Drones do pedido (o cliente pode querer mais de um) */
+.pedido-head { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink); margin-bottom: 6px; }
+.itens-box { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; }
+.item-row { display: flex; align-items: center; gap: 7px; }
+.item-row .item-prod { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.item-row .item-vezes { color: var(--muted); font-weight: 700; }
+.item-row .item-qtd { width: 62px; font: inherit; font-size: 13px; padding: 7px 6px; border: 1px solid var(--line); border-radius: 8px; text-align: center; }
+.item-row .item-x { border: 1px solid var(--line); background: #fff; color: var(--muted); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 13px; flex-shrink: 0; }
+.item-row .item-x:hover { border-color: #e0a3a3; color: #b02a1f; }
+#btnAddItem.small { padding: 6px 10px; font-size: 12px; }
+/* linha do pedido no card */
+.card .row.pedido { color: var(--ink); font-weight: 700; align-items: flex-start; }
+.card .row.pedido .pedido-qtd { margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--green-700); background: var(--green-100); border: 1px solid var(--green-500); border-radius: 6px; padding: 0 6px; white-space: nowrap; }
 .card .row.atendido { color: var(--green-600); font-weight: 600; }
 .lane-metrics .esperando { color: var(--amber); font-weight: 700; }
 .timeline { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 3px; }
