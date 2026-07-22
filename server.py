@@ -190,6 +190,85 @@ def dia_brt(iso):
         return None
 
 
+def _parse_iso(iso):
+    """ISO -> datetime aware (UTC). None se invalido."""
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+HEAT_DIAS = 7        # janela do "termometro" (mesma regra do front)
+HEAT_QUENTE = 3      # nº de atualizacoes recentes p/ virar "quente"
+
+
+def heat_nivel(lead):
+    """Termometro do lead: "" | "recente" (👍) | "quente" (🔥) — conta as
+    entradas de historico dos ultimos HEAT_DIAS dias (igual ao front). A entrada
+    automatica de criacao (tipo "novo") NAO conta: criar nao e engajamento."""
+    hist = lead.get("historico") or []
+    if not hist:
+        return ""
+    limite = datetime.now(timezone.utc) - timedelta(days=HEAT_DIAS)
+    n = 0
+    for h in hist:
+        if h.get("tipo") == "novo":
+            continue
+        t = _parse_iso(h.get("data"))
+        if t and t >= limite:
+            n += 1
+    if n >= HEAT_QUENTE:
+        return "quente"
+    if n >= 1:
+        return "recente"
+    return ""
+
+
+def precisa_retorno(lead, cadencia_dias):
+    """True quando o lead ativo passou do prazo sem contato e merece o alerta de
+    retorno. Leads quentes sao cobrados na metade do prazo. Um lead que ja espera
+    o registro da resposta (aguardando_resposta) NAO gera alerta de retorno."""
+    if lead.get("status") in ("ganho", "perdido", "desistiu", "curioso"):
+        return False
+    if lead.get("aguardando_resposta"):
+        return False
+    t = _parse_iso(lead.get("updated_at") or lead.get("created_at"))
+    if not t:
+        return False
+    idade_dias = (datetime.now(timezone.utc) - t).total_seconds() / 86400
+    metade = max(1, (cadencia_dias + 1) // 2)
+    # checa a idade (barato) antes do termometro (varre o historico): a maioria
+    # dos leads cai fora da "banda do meio" e nem calcula o heat.
+    if idade_dias < metade:
+        return False                       # nem um lead quente dispara antes da metade
+    if idade_dias >= cadencia_dias:
+        return True                        # ate frio dispara; termometro nao muda nada
+    return heat_nivel(lead) == "quente"    # banda do meio: so o quente (🔥) dispara
+
+
+def cadencia_dias_cfg():
+    """Prazo (dias) do alerta de retorno, configuravel; padrao 2, limites 1..30."""
+    try:
+        v = int(_db.get("settings", {}).get("cadencia_dias") or 2)
+    except (TypeError, ValueError):
+        v = 2
+    return max(1, min(30, v))
+
+
+def resposta_horas_cfg():
+    """Prazo (horas) p/ a resposta virar urgente; padrao 3, limites 1..168."""
+    try:
+        v = int(_db.get("settings", {}).get("resposta_horas") or 3)
+    except (TypeError, ValueError):
+        v = 3
+    return max(1, min(168, v))
+
+
 def new_id():
     return base64.urlsafe_b64encode(secrets.token_bytes(9)).decode().rstrip("=")
 
@@ -1253,7 +1332,7 @@ def handle_chatwoot_event(payload):
             registra_hist(lead, "Chatwoot", [
                 "🆕 Lead recebido do Chatwoot" + (" (canal: %s)" % canal if canal else ""),
                 "📞 SDR: %s (rodízio)" % sdr if sdr else "",
-            ])
+            ], tipo="novo")
             _db["leads"].append(lead)
             save_db()
             print("[webhook] novo lead: %s -> SDR %s (canal: %s)" % (
@@ -1611,6 +1690,8 @@ class Handler(BaseHTTPRequestHandler):
                 prestadores = sum(1 for l in visiveis if l.get("tipo") == "prestador")
                 pecuaristas = sum(1 for l in visiveis if l.get("tipo") == "pecuarista")
                 aguardando = sum(1 for l in visiveis if l.get("aguardando_resposta"))
+                _cad = cadencia_dias_cfg()
+                retornos = sum(1 for l in visiveis if precisa_retorno(l, _cad))
                 # cidades presentes nos leads visiveis (para o filtro de cidade)
                 cidades = sorted({str(l.get("regiao") or "").strip()
                                   for l in visiveis if str(l.get("regiao") or "").strip()})
@@ -1621,6 +1702,10 @@ class Handler(BaseHTTPRequestHandler):
                     "prestadores": prestadores,
                     "pecuaristas": pecuaristas,
                     "aguardando_resposta": aguardando,
+                    "retornos": retornos,
+                    "alertas": aguardando + retornos,
+                    "cadencia_dias": _cad,
+                    "resposta_horas": resposta_horas_cfg(),
                     "cidades": cidades,
                     "mesorregioes": MESORREGIOES,
                     "por_status": por_status,
@@ -1719,6 +1804,16 @@ class Handler(BaseHTTPRequestHandler):
                 st = _db.setdefault("settings", {})
                 if "whatsapp_number" in body:
                     st["whatsapp_number"] = re.sub(r"[^0-9]", "", str(body["whatsapp_number"]))
+                if "cadencia_dias" in body:
+                    try:
+                        st["cadencia_dias"] = max(1, min(30, int(body["cadencia_dias"])))
+                    except (TypeError, ValueError):
+                        return self.send_json(400, {"error": "Prazo de retorno inválido (use 1 a 30 dias)"})
+                if "resposta_horas" in body:
+                    try:
+                        st["resposta_horas"] = max(1, min(168, int(body["resposta_horas"])))
+                    except (TypeError, ValueError):
+                        return self.send_json(400, {"error": "Prazo da resposta inválido (use 1 a 168 horas)"})
                 save_db()
                 return self.send_json(200, {"settings": settings_publico()})
 
@@ -2173,7 +2268,7 @@ class Handler(BaseHTTPRequestHandler):
                 if dup:
                     return self.send_json(400, {"error": "Já existe um lead com esse %s: %s" % (
                         campo, dup.get("nome") or dup.get("telefone") or "(sem nome)")})
-                registra_hist(lead, user["nome"], ["🆕 Lead criado (cadastro manual)"], papel=user["papel"])
+                registra_hist(lead, user["nome"], ["🆕 Lead criado (cadastro manual)"], papel=user["papel"], tipo="novo")
                 _db["leads"].append(lead)
                 save_db()
                 return self.send_json(201, {"lead": lead})

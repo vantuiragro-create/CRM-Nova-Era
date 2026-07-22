@@ -180,6 +180,10 @@ async function loadStats() {
   try {
     const s = await api('/api/stats');
     STAGES = s.stages || STAGES;
+    // prazos dos alertas chegam a TODOS os papéis por aqui (settings via campanhas
+    // pode ser só do gestor); mantém os badges corretos para os vendedores também
+    if (s.cadencia_dias) settings.cadencia_dias = s.cadencia_dias;
+    if (s.resposta_horas) settings.resposta_horas = s.resposta_horas;
     const box = $('#stats');
     box.innerHTML = '';
     const cards = [
@@ -190,9 +194,9 @@ async function loadStats() {
       { n: (s.por_status.ganho || {}).count || 0, l: '🏆 Ganhos' },
       { n: brl(s.valor_pipeline), l: '💰 Pipeline' },
     ];
-    // só aparece quando há pendências (mantém a barra enxuta); clica p/ filtrar
-    if (s.aguardando_resposta) {
-      cards.push({ n: s.aguardando_resposta, l: '📱 Aguardando registro', cls: 'wait', acao: ativarFiltroAguardando });
+    // só aparece quando há alertas (mantém a barra enxuta); clica p/ abrir a central
+    if (s.alertas) {
+      cards.push({ n: s.alertas, l: '🔔 Alertas', cls: 'wait', acao: abrirAlertas });
     }
     for (const c of cards) {
       const d = el('div', 'stat' + (c.cls ? ' ' + c.cls : ''));
@@ -228,7 +232,7 @@ function atualizaBotaoLimpar() {
 function leadsDaVisao() {
   if (currentView === 'perdidos') return leadsCache.filter((l) => l.status === 'perdido');
   if (currentView === 'desistiu') return leadsCache.filter((l) => l.status === 'desistiu');
-  if (currentView === 'aguardando') return leadsCache.filter((l) => !!l.aguardando_resposta);
+  if (currentView === 'alertas') return leadsCache.filter((l) => !!l.aguardando_resposta || !!precisaRetorno(l));
   if (currentView === 'map') return leadsCache.slice();
   return leadsCache.filter((FUNIS[currentView] || FUNIS.sdr).inclui);
 }
@@ -248,7 +252,7 @@ function alvosMassa() {
 function atualizaEstadoVazio() {
   const box = $('#emptyFiltro');
   if (!box) return;
-  if (currentView === 'aguardando') { box.hidden = true; return; } // tem estado-vazio próprio
+  if (currentView === 'alertas') { box.hidden = true; return; } // tem estado-vazio próprio
   if (!primeiroLoadFeito) { box.hidden = true; return; } // evita piscar no boot
   const vazio = leadsNaVisao() === 0 && filtroAtivo();
   const mudou = box.hidden === vazio;
@@ -466,6 +470,7 @@ function atividadeRecente(lead) {
   const limite = Date.now() - HEAT_DIAS * 86400000;
   let n = 0;
   for (const h of hist) {
+    if (h.tipo === 'novo') continue; // criar o lead não é engajamento (não esquenta)
     const t = new Date(h.data).getTime();
     if (!isNaN(t) && t >= limite) n++;
   }
@@ -481,14 +486,34 @@ function heatEmoji(lead) {
   const lv = heatLevel(lead);
   return lv === 'quente' ? '🔥' : lv === 'recente' ? '👍' : '';
 }
+// Prazos configuráveis (painel ⏰ Alertas), com padrões e limites de segurança.
+function respostaHoras() { const v = parseInt(settings.resposta_horas, 10); return (v >= 1 && v <= 168) ? v : 3; }
+function cadenciaDias() { const v = parseInt(settings.cadencia_dias, 10); return (v >= 1 && v <= 30) ? v : 2; }
+
 // "Aguardando o vendedor registrar a resposta" (setado ao clicar no WhatsApp).
-// Fica amarelo e, passadas AGUARDA_VERMELHO_H horas sem registro, vira vermelho.
-const AGUARDA_VERMELHO_H = 3;
+// Fica amarelo e, passadas respostaHoras() horas sem registro, vira vermelho.
 function aguardaResposta(lead) {
   const t = lead && lead.aguardando_resposta ? new Date(lead.aguardando_resposta).getTime() : NaN;
   if (isNaN(t)) return null;
   const ms = Date.now() - t;
-  return { ms, urgente: ms >= AGUARDA_VERMELHO_H * 3600000 };
+  return { ms, urgente: ms >= respostaHoras() * 3600000 };
+}
+
+// Alerta de RETORNO: lead ativo parado há X dias sem contato. Quentes 🔥 são
+// cobrados na metade do prazo. Não aparece se já está aguardando resposta.
+// nivel: 'quente' (vermelho) | 'morno' (laranja) | 'frio' (amarelo).
+function precisaRetorno(lead) {
+  if (!lead) return null;
+  if (STATUS_ENCERRADOS.includes(lead.status)) return null;
+  if (lead.aguardando_resposta) return null;
+  const heat = heatLevel(lead); // '' | 'recente' | 'quente'
+  const base = cadenciaDias();
+  const limiteDias = heat === 'quente' ? Math.max(1, Math.ceil(base / 2)) : base;
+  const t = new Date(lead.updated_at || lead.created_at).getTime();
+  if (isNaN(t)) return null;
+  const ms = Date.now() - t;
+  if (ms < limiteDias * 86400000) return null;
+  return { ms, nivel: heat === 'quente' ? 'quente' : heat === 'recente' ? 'morno' : 'frio' };
 }
 // Clicar no WhatsApp = "contatei o cliente": marca a pendência de registrar a
 // resposta e anota no histórico. Roda em segundo plano; nunca atrapalha o link.
@@ -626,11 +651,11 @@ function setView(view) {
   $('#tabPerdidos').classList.toggle('active', view === 'perdidos');
   $('#tabDesistiu').classList.toggle('active', view === 'desistiu');
   $('#tabMap').classList.toggle('active', view === 'map');
-  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos' || view === 'desistiu' || view === 'aguardando');
+  $('#boardWrap').hidden = (view === 'map' || view === 'perdidos' || view === 'desistiu' || view === 'alertas');
   $('#mapWrap').hidden = view !== 'map';
   $('#lostWrap').hidden = view !== 'perdidos';
   $('#desistiuWrap').hidden = view !== 'desistiu';
-  $('#aguardandoWrap').hidden = view !== 'aguardando';
+  $('#alertasWrap').hidden = view !== 'alertas';
   if (view === 'map') {
     ensureMap();
     // o container acabou de ficar visível; o Leaflet precisa remedir
@@ -639,8 +664,8 @@ function setView(view) {
     renderLost();
   } else if (view === 'desistiu') {
     renderDesistiu();
-  } else if (view === 'aguardando') {
-    renderAguardando();
+  } else if (view === 'alertas') {
+    renderAlertas();
   } else {
     renderBoard();
   }
@@ -689,26 +714,41 @@ function renderDesistiu() {
   });
 }
 
-// Lista única com as pendências de resposta de TODOS os funis (o card de stats
-// e o contador são globais). Mais urgentes (esperando há mais tempo) no topo.
-function renderAguardando() {
-  const leads = leadsCache.filter((l) => !!l.aguardando_resposta);
-  const head = $('#aguardandoHead');
-  head.innerHTML = '';
-  head.append(el('div', 'lost-count', `📱 ${leads.length} ${leads.length === 1 ? 'lead aguardando você registrar a resposta' : 'leads aguardando você registrar a resposta'}`));
-  head.append(el('div', 'lost-sub', 'Abra o card, escreva no histórico o que o cliente respondeu e o alerta some. Fica vermelho após 3h sem registro.'));
+// Prioridade do alerta p/ ordenar a central (menor = mais urgente/topo):
+// 0 vermelho (resposta urgente ou lead quente), 1 laranja (morno),
+// 2 amarelo resposta pendente, 3 amarelo frio. Empate: mais antigo primeiro.
+function alertaOrdem(l) {
+  const ar = aguardaResposta(l);
+  if (ar) return [ar.urgente ? 0 : 2, -ar.ms];
+  const rt = precisaRetorno(l);
+  if (rt) return [rt.nivel === 'quente' ? 0 : rt.nivel === 'morno' ? 1 : 3, -rt.ms];
+  return [9, 0];
+}
 
-  const grid = $('#aguardandoGrid');
+// Central de Alertas: junta "respostas a registrar" + "retornos a fazer" de TODOS
+// os funis num lugar só (o card de stats e o contador são globais). Urgentes no topo.
+function renderAlertas() {
+  const leads = leadsCache.filter((l) => !!l.aguardando_resposta || !!precisaRetorno(l));
+  const head = $('#alertasHead');
+  head.innerHTML = '';
+  head.append(el('div', 'lost-count', `🔔 ${leads.length} ${leads.length === 1 ? 'lead precisa de você' : 'leads precisam de você'}`));
+  head.append(el('div', 'lost-sub', 'Vermelho = urgente. Abra o card, fale com o cliente e registre no histórico — o alerta some.'));
+
+  const grid = $('#alertasGrid');
   grid.innerHTML = '';
   if (!leads.length) {
-    grid.append(el('div', 'lost-empty', 'Tudo registrado — nenhuma resposta pendente. 🎉'));
+    grid.append(el('div', 'lost-empty', filtroAtivo()
+      ? 'Nenhum alerta corresponde à busca/filtros — limpe os filtros para ver todos.'
+      : 'Nenhum alerta agora — tudo em dia. 🎉'));
     return;
   }
-  // mais antigo (esperando há mais tempo) primeiro = mais urgente
-  leads.sort((a, b) => (a.aguardando_resposta < b.aguardando_resposta ? -1 : 1));
+  leads.sort((a, b) => {
+    const oa = alertaOrdem(a); const ob = alertaOrdem(b);
+    return oa[0] !== ob[0] ? oa[0] - ob[0] : oa[1] - ob[1];
+  });
   for (const lead of leads) {
     const card = renderCard(lead);
-    card.draggable = false; // aqui não se arrasta; abre para registrar a resposta
+    card.draggable = false; // aqui não se arrasta; abre para agir e registrar
     grid.append(card);
   }
 }
@@ -735,7 +775,7 @@ async function loadLeads() {
   primeiroLoadFeito = true;
   if (currentView === 'perdidos') renderLost();
   else if (currentView === 'desistiu') renderDesistiu();
-  else if (currentView === 'aguardando') renderAguardando();
+  else if (currentView === 'alertas') renderAlertas();
   else { renderBoard(); if (currentView === 'map') renderMap(); }
   atualizaEstadoVazio();
 }
@@ -904,6 +944,16 @@ function renderCard(lead) {
       ar.urgente ? `Resposta pendente há ${duracao(ar.ms)} — registre!`
                  : `Registre o que o cliente respondeu · há ${duracao(ar.ms)}`));
     card.append(w);
+  } else {
+    const rt = precisaRetorno(lead);
+    if (rt) {
+      const cls = rt.nivel === 'quente' ? 'urgente' : rt.nivel === 'morno' ? 'morno' : 'pendente';
+      const w = el('div', 'wait-reply ' + cls);
+      w.append(el('span', 'ic', rt.nivel === 'quente' ? '🔥' : '📨'), document.createTextNode(
+        rt.nivel === 'quente' ? `Cliente quente parado há ${duracao(rt.ms)} — mande mensagem!`
+                              : `Hora de dar um retorno · há ${duracao(rt.ms)} sem contato`));
+      card.append(w);
+    }
   }
   if (lead.telefone) {
     const r = el('div', 'row');
@@ -1695,6 +1745,34 @@ $('#btnSaveWa').addEventListener('click', async () => {
   } catch (err) { toast('Erro: ' + err.message); }
 });
 
+// ---- Painel de Alertas (prazos configuráveis) ----
+function abrirCfgAlertas() {
+  $('#cfgCadencia').value = cadenciaDias();
+  $('#cfgRespostaHoras').value = respostaHoras();
+  $('#manageMenu').hidden = true;
+  $('#alertasCfgBackdrop').hidden = false;
+}
+function fecharCfgAlertas() { $('#alertasCfgBackdrop').hidden = true; }
+$('#btnAlertas').addEventListener('click', abrirCfgAlertas);
+$('#alertasCfgClose').addEventListener('click', fecharCfgAlertas);
+$('#alertasCfgBackdrop').addEventListener('click', (e) => {
+  if (e.target === $('#alertasCfgBackdrop')) fecharCfgAlertas();
+});
+$('#btnSaveAlertas').addEventListener('click', async () => {
+  const cad = parseInt($('#cfgCadencia').value, 10);
+  const hor = parseInt($('#cfgRespostaHoras').value, 10);
+  if (!(cad >= 1 && cad <= 30)) { toast('Prazo de retorno: use 1 a 30 dias'); return; }
+  if (!(hor >= 1 && hor <= 168)) { toast('Prazo da resposta: use 1 a 168 horas'); return; }
+  try {
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ cadencia_dias: cad, resposta_horas: hor }) });
+    settings.cadencia_dias = cad; settings.resposta_horas = hor;
+    fecharCfgAlertas();
+    await loadStats();       // atualiza contagem + badges com o novo prazo
+    if (currentView === 'alertas') renderAlertas(); else renderBoard();
+    toast('✅ Prazos dos alertas salvos');
+  } catch (err) { toast('Erro: ' + err.message); }
+});
+
 // ---------------------------------------------------------------------------
 // Relatório diário (leads recebidos × qualificados)
 // ---------------------------------------------------------------------------
@@ -2024,6 +2102,7 @@ document.addEventListener('keydown', (e) => {
   if (!$('#reportBackdrop').hidden) $('#reportBackdrop').hidden = true;
   if (!$('#visitBackdrop').hidden) $('#visitBackdrop').hidden = true;
   if (!$('#teamActBackdrop').hidden) $('#teamActBackdrop').hidden = true;
+  if (!$('#alertasCfgBackdrop').hidden) $('#alertasCfgBackdrop').hidden = true;
 });
 
 $('#tabSDR').addEventListener('click', () => setView('sdr'));
@@ -2100,10 +2179,13 @@ function aplicaFiltro(key) {
   atualizaBotaoLimpar();
 }
 
-// Atalho do card de stats: abre a lista única de "aguardando registro" (junta as
-// pendências de TODOS os funis num lugar só — o contador é global).
-function ativarFiltroAguardando() {
-  setView('aguardando');
+// Atalho do card de stats: abre a central de Alertas (respostas a registrar +
+// retornos a fazer) juntando TODOS os funis num lugar só — o contador é global.
+function abrirAlertas() {
+  setView('alertas');
+  // o contador do card é global; a central lê o leadsCache (que pode estar
+  // filtrado). Limpa os filtros para a lista bater com o número do card.
+  if (filtroAtivo()) limparFiltros();
 }
 
 function renderChips() {
@@ -2201,7 +2283,7 @@ function limparFiltros() {
   if (recarrega) loadLeads();           // loadLeads já re-renderiza a aba atual (inclui Perdidos)
   else if (currentView === 'perdidos') renderLost();
   else if (currentView === 'desistiu') renderDesistiu();
-  else if (currentView === 'aguardando') renderAguardando();
+  else if (currentView === 'alertas') renderAlertas();
   else renderBoard();
 }
 $('#btnLimparFiltros').addEventListener('click', limparFiltros);
@@ -2311,6 +2393,7 @@ function applyRoleUI() {
   $('#btnImport').hidden = !gestor;
   $('#btnReport').hidden = !gestor;
   $('#btnCampaigns').hidden = !gestor;
+  $('#btnAlertas').hidden = !gestor;
   $('#btnUsers').hidden = me.papel !== 'admin';
   // aviso de senha padrão (só para o admin que ainda não trocou)
   if (me.senha_padrao) {
