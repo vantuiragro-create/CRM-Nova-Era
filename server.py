@@ -1159,6 +1159,18 @@ class _SemRedirect(urllib.request.HTTPRedirectHandler):
 _ABRIDOR_SEM_REDIRECT = urllib.request.build_opener(_SemRedirect)
 
 
+def chatwoot_headers(token, json_body=False):
+    """Cabecalhos de autenticacao do Chatwoot. O token vai em DOIS nomes:
+    'api_access_token' (o oficial) e 'Api-Access-Token' (com hifens) — nginx/
+    openresty, por padrao, DESCARTA cabecalhos com underscore no nome, e o
+    Chatwoot atras dele nunca via o token (401 mesmo com o token certo). O
+    Rails normaliza hifens p/ underscore, entao os dois chegam iguais."""
+    h = {"api_access_token": token, "Api-Access-Token": token}
+    if json_body:
+        h["Content-Type"] = "application/json"
+    return h
+
+
 def chatwoot_envia_mensagem(base, acc, conv, token, content):
     """Envia uma mensagem OUTGOING numa conversa do Chatwoot pela API. Retorna
     True se aceitou (2xx). Levanta excecao em erro de rede/HTTP (o chamador trata)."""
@@ -1168,10 +1180,8 @@ def chatwoot_envia_mensagem(base, acc, conv, token, content):
     url = "%s/api/v1/accounts/%s/conversations/%s/messages" % (base, acc, conv)
     dados = json.dumps({"content": content, "message_type": "outgoing",
                         "private": False}).encode("utf-8")
-    req = urllib.request.Request(url, data=dados, method="POST", headers={
-        "Content-Type": "application/json",
-        "api_access_token": token,
-    })
+    req = urllib.request.Request(url, data=dados, method="POST",
+                                 headers=chatwoot_headers(token, json_body=True))
     with _ABRIDOR_SEM_REDIRECT.open(req, timeout=12) as resp:
         return 200 <= getattr(resp, "status", 200) < 300
 
@@ -2076,7 +2086,7 @@ class Handler(BaseHTTPRequestHandler):
                     "Falta preencher %s — preencha, salve e teste de novo." % " e ".join(faltas)})
 
             def _get(url):
-                req = urllib.request.Request(url, headers={"api_access_token": token})
+                req = urllib.request.Request(url, headers=chatwoot_headers(token))
                 with _ABRIDOR_SEM_REDIRECT.open(req, timeout=10):
                     pass
 
