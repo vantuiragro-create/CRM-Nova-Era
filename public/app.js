@@ -409,6 +409,9 @@ async function loadStats() {
     // pode ser só do gestor); mantém os badges corretos para os vendedores também
     if (s.cadencia_dias) settings.cadencia_dias = s.cadencia_dias;
     if (s.resposta_horas) settings.resposta_horas = s.resposta_horas;
+    // base do Chatwoot chega a todos (não é segredo) p/ montar o link da conversa
+    if ('chatwoot_url' in s) settings.chatwoot_url = s.chatwoot_url;
+    if ('chatwoot_account_id' in s) settings.chatwoot_account_id = s.chatwoot_account_id;
     atualizaEscopoSwitch(s.atuais_total, s.recuperacao_total, s.servicos_total);
     const box = $('#stats');
     box.innerHTML = '';
@@ -757,6 +760,48 @@ async function registrarContatoWhatsapp(id) {
     }
   } catch (_) { /* silencioso: abrir a conversa é o que importa */ }
 }
+
+// ---- Atender no Chatwoot (canal OFICIAL — não usa o WhatsApp pessoal) ----
+// Monta a URL da conversa no Chatwoot (para abrir em outra aba)
+function chatwootConvUrl(lead) {
+  const base = String(settings.chatwoot_url || '').replace(/\/$/, '');
+  const acc = settings.chatwoot_account_id;
+  const conv = lead && lead.chatwoot_conversation_id;
+  if (!base || !acc || !conv) return null;
+  return `${base}/app/accounts/${acc}/conversations/${conv}`;
+}
+// Clique no botão: abre a conversa JÁ (na hora do clique, senão o navegador
+// bloqueia o popup) e pede ao servidor para mandar a saudação automática.
+// O servidor manda a saudação só 1x por ciclo de contato (reclicar não repete).
+const cwEmVoo = new Set(); // trava local de duplo-clique (por lead)
+function atenderNoChatwoot(lead) {
+  if (cwEmVoo.has(lead.id)) return;
+  cwEmVoo.add(lead.id);
+  const url = chatwootConvUrl(lead);
+  if (url) window.open(url, '_blank', 'noopener');
+  api('/api/leads/' + encodeURIComponent(lead.id) + '/chatwoot', { method: 'POST' })
+    .then((res) => {
+      // guarda a base p/ os próximos cliques abrirem a aba na hora
+      if (res.chatwoot_url) settings.chatwoot_url = res.chatwoot_url;
+      if (res.chatwoot_account_id) settings.chatwoot_account_id = res.chatwoot_account_id;
+      if (!url && res.conversa_url) {
+        // fora do gesto do clique o navegador pode bloquear a aba — avisa
+        const w = window.open(res.conversa_url, '_blank', 'noopener');
+        if (!w) toast('🔒 O navegador bloqueou a aba — clique no botão de novo para abrir a conversa');
+      }
+      if (res.enviada) toast('📨 Saudação enviada no Chatwoot');
+      else if (res.erro) toast('⚠️ ' + res.erro + ' — mande a saudação pela conversa');
+      else if (!res.configurado) {
+        const gestor = me && (me.papel === 'admin' || me.papel === 'gerente');
+        toast(gestor ? 'Configure o Chatwoot em ⚙️ Gerenciar → 📣 Campanhas para ativar a saudação automática'
+                     : 'A saudação automática ainda não foi configurada — fale com o gestor');
+      }
+      // reflete o contato (histórico/alerta) sem esperar o próximo refresh
+      loadLeads().then(() => { if (form.id.value === lead.id) { const l2 = leadsCache.find((x) => x.id === lead.id); if (l2) renderHistorico(l2); } });
+    })
+    .catch((err) => { if (!err.offline) toast('Erro no Chatwoot: ' + err.message); })
+    .finally(() => cwEmVoo.delete(lead.id));
+}
 // papelLabel usa o PAPEL_LABEL definido mais abaixo (seção de Usuários);
 // é chamado só em tempo de execução (renderHistorico), então não há TDZ.
 const papelLabel = (p) => PAPEL_LABEL[p] || p || '';
@@ -835,6 +880,13 @@ function renderMap() {
       wa.textContent = '💬 WhatsApp';
       wa.addEventListener('click', () => registrarContatoWhatsapp(lead.id));
       acoes.append(wa);
+    }
+    if (lead.chatwoot_conversation_id) {
+      const cw = el('button', 'pp-btn cw', '📨 Chatwoot');
+      cw.type = 'button';
+      cw.title = 'Atender pelo canal oficial (com saudação automática)';
+      cw.onclick = () => atenderNoChatwoot(lead);
+      acoes.append(cw);
     }
     const bEdit = el('button', 'pp-btn', '✏️ Editar lead');
     bEdit.type = 'button';
@@ -1225,6 +1277,16 @@ function renderCard(lead) {
     }
     card.append(r);
   }
+  // lead com conversa no Chatwoot: botão do canal OFICIAL (com saudação automática)
+  if (lead.chatwoot_conversation_id) {
+    const r = el('div', 'row');
+    const b = el('button', 'cw-btn', '📨 Atender no Chatwoot');
+    b.type = 'button';
+    b.title = 'Abre a conversa no Chatwoot e envia a saudação automática (canal oficial da empresa)';
+    b.addEventListener('click', (e) => { e.stopPropagation(); atenderNoChatwoot(lead); });
+    r.append(b);
+    card.append(r);
+  }
   if (lead.regiao) { const r = el('div', 'row'); r.append(el('span', 'ic', '📍'), document.createTextNode(lead.regiao)); card.append(r); }
   if (lead.area_cultivada) { const r = el('div', 'row'); r.append(el('span', 'ic', '🌾'), document.createTextNode(lead.area_cultivada)); card.append(r); }
   const pedido = resumoItens(lead);
@@ -1398,6 +1460,8 @@ function openModal(lead) {
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
   atualizaWaLead();
+  // botão "Atender no Chatwoot" só para lead com conversa lá
+  $('#cwLead').hidden = !lead.chatwoot_conversation_id;
 
   // drones do pedido (lead antigo: cai no produto único; lead sem nada: 1 linha vazia)
   const itensIni = (lead.itens && lead.itens.length)
@@ -2003,6 +2067,12 @@ function linkRow(label, value) {
 
 function renderCampaigns() {
   $('#waNumber').value = settings.whatsapp_number || '';
+  // config do Chatwoot (o token nunca volta do servidor; o placeholder indica se já existe)
+  $('#cwUrl').value = settings.chatwoot_url || '';
+  $('#cwAccount').value = settings.chatwoot_account_id || '';
+  $('#cwToken').value = '';
+  $('#cwToken').placeholder = settings.chatwoot_token_definido ? '••••••• (já salvo — cole p/ trocar)' : 'cole o token aqui';
+  $('#cwSaudacao').value = settings.chatwoot_saudacao || '';
   const list = $('#campList');
   list.innerHTML = '';
   if (campaigns.length === 0) {
@@ -2106,6 +2176,23 @@ $('#btnSaveWa').addEventListener('click', async () => {
     await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ whatsapp_number: $('#waNumber').value }) });
     await loadCampaigns(); renderCampaigns();
     toast('Número salvo — links dos anúncios atualizados');
+  } catch (err) { toast('Erro: ' + err.message); }
+});
+
+// salvar a integração do Chatwoot (token só é enviado se o campo foi preenchido)
+$('#btnSaveCw').addEventListener('click', async () => {
+  const body = {
+    chatwoot_url: $('#cwUrl').value,
+    chatwoot_account_id: $('#cwAccount').value,
+    chatwoot_saudacao: $('#cwSaudacao').value,
+  };
+  const tok = $('#cwToken').value.trim();
+  if (tok) body.chatwoot_token = tok; // não sobrescrever o token salvo com vazio
+  try {
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify(body) });
+    await loadCampaigns(); renderCampaigns();
+    await loadStats(); // atualiza a base p/ os botões dos cards
+    toast('✅ Chatwoot configurado — botão "Atender no Chatwoot" ativo');
   } catch (err) { toast('Erro: ' + err.message); }
 });
 
@@ -2517,6 +2604,12 @@ form.telefone.addEventListener('input', atualizaWaLead);
 // abrir o WhatsApp pela ficha aberta também marca "aguardando registrar a resposta"
 const waLeadEl = $('#waLead');
 if (waLeadEl) waLeadEl.addEventListener('click', () => registrarContatoWhatsapp(form.id.value));
+// atender pelo Chatwoot direto da ficha (canal oficial + saudação automática)
+const cwLeadEl = $('#cwLead');
+if (cwLeadEl) cwLeadEl.addEventListener('click', () => {
+  const lead = leadsCache.find((l) => l.id === form.id.value);
+  if (lead) atenderNoChatwoot(lead);
+});
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('blur', () => setTimeout(() => { $('#cidadesBox').hidden = true; }, 150));

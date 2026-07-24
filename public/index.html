@@ -170,6 +170,7 @@
           </label>
           <label>Telefone / WhatsApp <span class="req">*</span>
             <a id="waLead" class="wa-btn" target="_blank" rel="noopener" title="Abrir conversa no WhatsApp" hidden>💬 Abrir no WhatsApp</a>
+            <button type="button" id="cwLead" class="cw-btn" title="Abre a conversa no Chatwoot e envia a saudação automática (canal oficial)" hidden>📨 Atender no Chatwoot</button>
             <input name="telefone" placeholder="Ex.: +55 62 99999-0000" required />
           </label>
           <label>E-mail <span class="req">*</span> <small class="req-hint">(nota fiscal)</small>
@@ -463,6 +464,30 @@
             <input id="waNumber" placeholder="Ex.: 5562999990000" />
           </label>
           <button class="btn primary small" id="btnSaveWa" type="button">Salvar número</button>
+        </div>
+
+        <div class="section-title" style="margin-top:16px">📨 Atender pelo Chatwoot (canal oficial)</div>
+        <p class="muted-note">Os vendedores atendem pelo Chatwoot da empresa (não pelo WhatsApp pessoal,
+          que corre risco de bloqueio). O botão “Atender no Chatwoot” abre a conversa e envia a saudação
+          abaixo automaticamente. Use <b>{nome}</b> para o primeiro nome do cliente.</p>
+        <div class="settings-row">
+          <label class="inline">Endereço do Chatwoot
+            <input id="cwUrl" placeholder="Ex.: https://chat.novaeradrones.com.br" />
+          </label>
+          <label class="inline">Nº da conta
+            <input id="cwAccount" placeholder="Ex.: 2" style="width:70px" />
+          </label>
+        </div>
+        <div class="settings-row">
+          <label class="inline">Token de acesso da API <small class="req-hint">(Perfil → Configurações → Token de acesso)</small>
+            <input id="cwToken" type="password" placeholder="cole o token aqui" autocomplete="off" />
+          </label>
+        </div>
+        <div class="settings-row">
+          <label class="inline" style="flex:1">Saudação automática
+            <textarea id="cwSaudacao" rows="2" placeholder="Ex.: Olá {nome}! Aqui é da Nova Era Drones 👋 Tudo bem?"></textarea>
+          </label>
+          <button class="btn primary small" id="btnSaveCw" type="button">Salvar Chatwoot</button>
         </div>
 
         <form id="campForm" class="camp-add">

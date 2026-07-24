@@ -466,6 +466,15 @@ body.modo-servicos .toolbar { background: #eef8fb; box-shadow: inset 0 3px 0 #0e
   font-weight: 700; text-decoration: none;
 }
 .card .row .wa-link:hover { text-decoration: underline; }
+/* botão "Atender no Chatwoot" (canal oficial) no card e na ficha */
+.cw-btn {
+  font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  color: #1f4b99; background: #e8f0fb; border: 1px solid #b6cdf2;
+  border-radius: 7px; padding: 3px 9px; display: inline-flex; align-items: center; gap: 5px;
+}
+.cw-btn:hover { background: #dce9fa; }
+#cwLead.cw-btn { margin-top: 4px; }
+.map-popup .pp-btn.cw { color: #1f4b99; border-color: #b6cdf2; background: #e8f0fb; }
 .card .row .wa-link .ic { opacity: 1; }
 .card .row.esperando { color: var(--amber); font-weight: 700; }
 .card .row.decisor { color: var(--green-700); font-weight: 600; }

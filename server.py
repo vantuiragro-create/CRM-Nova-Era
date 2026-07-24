@@ -27,6 +27,8 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+import urllib.request
+import urllib.error
 
 # ---------------------------------------------------------------------------
 # Configuracao
@@ -166,6 +168,8 @@ MIME = {
 # Camada de dados (JSON em arquivo + lock para acesso concorrente)
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
+# leads com envio de saudacao (Chatwoot) em andamento — trava de duplo-clique
+_cw_em_voo = set()
 # presenca "online": user_id -> ultima vez visto (ISO). So em memoria (efemero,
 # nao vai pro disco); atualizado a cada requisicao autenticada.
 _online = {}
@@ -1103,8 +1107,60 @@ def user_publico(u):
 
 
 def settings_publico():
-    """Config exposta ao painel — sem o token do webhook (segredo do servidor)."""
-    return {k: v for k, v in _db.get("settings", {}).items() if k != "webhook_token"}
+    """Config exposta ao painel — sem os segredos (tokens do webhook e do Chatwoot)."""
+    st = _db.get("settings", {})
+    pub = {k: v for k, v in st.items() if k not in ("webhook_token", "chatwoot_token")}
+    pub["chatwoot_token_definido"] = bool(st.get("chatwoot_token"))
+    return pub
+
+
+def chatwoot_cfg():
+    st = _db.get("settings", {})
+    return (str(st.get("chatwoot_url") or "").rstrip("/"),
+            str(st.get("chatwoot_account_id") or "").strip(),
+            str(st.get("chatwoot_token") or ""),
+            str(st.get("chatwoot_saudacao") or ""))
+
+
+def conv_id_valido(conv):
+    """conversation_id só é usado em URL se for numérico (evita injeção de path
+    numa chamada autenticada com o token). Retorna a string de dígitos ou None."""
+    s = str(conv).strip() if conv is not None else ""
+    return s if s.isdigit() else None
+
+
+def chatwoot_conversa_url(base, acc, conv):
+    conv = conv_id_valido(conv)
+    if base and acc and conv:
+        return "%s/app/accounts/%s/conversations/%s" % (base, acc, conv)
+    return None
+
+
+class _SemRedirect(urllib.request.HTTPRedirectHandler):
+    """POST autenticado nao pode seguir redirect (viraria GET sem corpo e o
+    'sucesso' seria mentira). 3xx vira HTTPError, tratado como recusa."""
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_ABRIDOR_SEM_REDIRECT = urllib.request.build_opener(_SemRedirect)
+
+
+def chatwoot_envia_mensagem(base, acc, conv, token, content):
+    """Envia uma mensagem OUTGOING numa conversa do Chatwoot pela API. Retorna
+    True se aceitou (2xx). Levanta excecao em erro de rede/HTTP (o chamador trata)."""
+    conv = conv_id_valido(conv)
+    if not conv:
+        return False
+    url = "%s/api/v1/accounts/%s/conversations/%s/messages" % (base, acc, conv)
+    dados = json.dumps({"content": content, "message_type": "outgoing",
+                        "private": False}).encode("utf-8")
+    req = urllib.request.Request(url, data=dados, method="POST", headers={
+        "Content-Type": "application/json",
+        "api_access_token": token,
+    })
+    with _ABRIDOR_SEM_REDIRECT.open(req, timeout=12) as resp:
+        return 200 <= getattr(resp, "status", 200) < 300
 
 
 # ---------------------------------------------------------------------------
@@ -1326,6 +1382,11 @@ def handle_chatwoot_event(payload):
         conversation_id = conversation.get("id") or payload.get("conversation_id")
     else:
         return {"ok": True, "ignored": event}
+
+    # id de conversa só serve se for numérico (vai parar em URLs autenticadas)
+    if conversation_id is not None and not isinstance(conversation_id, int):
+        s = str(conversation_id).strip()
+        conversation_id = int(s) if s.isdigit() else None
 
     meta = conversation.get("meta") or payload.get("meta") or {}
     sender = (
@@ -1866,6 +1927,8 @@ class Handler(BaseHTTPRequestHandler):
                     "servicos_total": n_servicos,
                     "cadencia_dias": _cad,
                     "resposta_horas": resposta_horas_cfg(),
+                    "chatwoot_url": str(_db.get("settings", {}).get("chatwoot_url") or ""),
+                    "chatwoot_account_id": str(_db.get("settings", {}).get("chatwoot_account_id") or ""),
                     "cidades": cidades,
                     "mesorregioes": MESORREGIOES,
                     "por_status": por_status,
@@ -1974,6 +2037,18 @@ class Handler(BaseHTTPRequestHandler):
                         st["resposta_horas"] = max(1, min(168, int(body["resposta_horas"])))
                     except (TypeError, ValueError):
                         return self.send_json(400, {"error": "Prazo da resposta inválido (use 1 a 168 horas)"})
+                # Integracao com o Chatwoot (atender no canal oficial)
+                if "chatwoot_url" in body:
+                    u = str(body["chatwoot_url"] or "").strip().rstrip("/")
+                    if u and not u.startswith(("http://", "https://")):
+                        u = "https://" + u
+                    st["chatwoot_url"] = u
+                if "chatwoot_account_id" in body:
+                    st["chatwoot_account_id"] = re.sub(r"[^0-9]", "", str(body["chatwoot_account_id"]))
+                if "chatwoot_token" in body:
+                    st["chatwoot_token"] = str(body["chatwoot_token"] or "").strip()
+                if "chatwoot_saudacao" in body:
+                    st["chatwoot_saudacao"] = str(body["chatwoot_saudacao"] or "").strip()[:2000]
                 save_db()
                 return self.send_json(200, {"settings": settings_publico()})
 
@@ -2432,6 +2507,77 @@ class Handler(BaseHTTPRequestHandler):
                     lead["aguardando_resposta"] = now_iso()
                 save_db()
                 return self.send_json(200, {"lead": lead})
+
+        # Atender no Chatwoot: manda a saudacao automatica na conversa e devolve a
+        # URL da conversa para o app abrir. (Canal OFICIAL — evita o WhatsApp pessoal.)
+        # A saudacao sai 1x por ciclo de contato (mesmo debounce do historico) —
+        # reclicar/reabrir NAO reenvia a mensagem ao cliente.
+        mch = re.match(r"^/api/leads/([^/]+)/chatwoot$", path)
+        if mch and method == "POST":
+            lead_id = mch.group(1)
+            base, acc, token, saud = chatwoot_cfg()
+            configurado = bool(base and acc and token)
+            with _lock:
+                lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                if not lead or not pode_ver_lead(user, lead):
+                    return self.send_json(404, {"error": "Lead nao encontrado"})
+                conv = conv_id_valido(lead.get("chatwoot_conversation_id"))
+                conv_url = chatwoot_conversa_url(base, acc, conv)
+                nome = str(lead.get("nome") or "").strip()
+                autor, papel = user["nome"], user["papel"]
+                ja_pendente = bool(lead.get("aguardando_resposta"))
+                ultimo = lead["historico"][-1] if lead.get("historico") else None
+                encerrado = lead.get("status") in ("ganho", "perdido", "desistiu", "curioso")
+                # clique repetido no mesmo ciclo (ja aguardando + ultimo = contato)
+                # nao reenvia; lead encerrado tambem nao recebe saudacao
+                deve_enviar = bool(conv) and configurado and bool(saud) and not encerrado \
+                    and not (ja_pendente and ultimo and ultimo.get("tipo") == "contato")
+                # trava de duplo-clique: uma requisicao em voo por lead
+                if lead_id in _cw_em_voo:
+                    return self.send_json(200, {"conversa_url": conv_url, "enviada": False,
+                                                "erro": None, "tem_conversa": bool(conv),
+                                                "configurado": configurado,
+                                                "chatwoot_url": base, "chatwoot_account_id": acc})
+                _cw_em_voo.add(lead_id)
+            enviada, erro = False, None
+            try:
+                # envia a saudacao FORA do lock (chamada externa pode demorar)
+                if deve_enviar:
+                    primeiro = nome.split()[0] if nome else ""
+                    if primeiro:
+                        texto = saud.replace("{nome}", primeiro).replace("{primeiro_nome}", primeiro)
+                    else:  # sem nome: tira o {nome} (e o espaco) p/ nao sair "Olá !"
+                        texto = re.sub(r"\s*\{(nome|primeiro_nome)\}", "", saud)
+                    try:
+                        enviada = chatwoot_envia_mensagem(base, acc, conv, token, texto)
+                    except urllib.error.HTTPError as e:
+                        erro = "O Chatwoot recusou (HTTP %s) — confira o token e a conta" % e.code
+                    except Exception as e:
+                        erro = "Não consegui falar com o Chatwoot (%s)" % type(e).__name__
+                # registra o contato e marca "aguardando resposta" — mas so quando
+                # algo aconteceu de fato (saudacao enviada e/ou conversa aberta)
+                if conv and not encerrado and (enviada or conv_url):
+                    with _lock:
+                        lead = next((l for l in _db["leads"] if l["id"] == lead_id), None)
+                        if lead:
+                            # RELE o estado (outro clique pode ter gravado durante a
+                            # chamada externa) — snapshot velho duplicaria o historico
+                            ja2 = bool(lead.get("aguardando_resposta"))
+                            ult2 = lead["historico"][-1] if lead.get("historico") else None
+                            if not (ja2 and ult2 and ult2.get("tipo") == "contato"):
+                                msg = "📨 Saudação enviada pelo Chatwoot" if enviada else "💬 Atendimento aberto no Chatwoot"
+                                registra_hist(lead, autor, [msg], papel=papel, tipo="contato")
+                                lead["updated_at"] = now_iso()
+                            if not ja2:
+                                lead["aguardando_resposta"] = now_iso()
+                            save_db()
+            finally:
+                with _lock:
+                    _cw_em_voo.discard(lead_id)
+            return self.send_json(200, {"conversa_url": conv_url, "enviada": enviada,
+                                        "erro": erro, "tem_conversa": bool(conv),
+                                        "configurado": configurado,
+                                        "chatwoot_url": base, "chatwoot_account_id": acc})
 
         # Criar
         if path == "/api/leads" and method == "POST":
