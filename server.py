@@ -1114,9 +1114,22 @@ def settings_publico():
     return pub
 
 
+def chatwoot_base_url(valor):
+    """Extrai a RAIZ do endereço do Chatwoot. Aceita o endereço colado direto do
+    navegador (ex.: https://chat.x.com.br/app/accounts/2/dashboard) e devolve so
+    https://chat.x.com.br — senao a API seria chamada num caminho errado (404)."""
+    u = str(valor or "").strip()
+    if not u:
+        return ""
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u
+    m = re.match(r"^(https?://[^/\s]+)", u)
+    return m.group(1) if m else ""
+
+
 def chatwoot_cfg():
     st = _db.get("settings", {})
-    return (str(st.get("chatwoot_url") or "").rstrip("/"),
+    return (chatwoot_base_url(st.get("chatwoot_url")),
             str(st.get("chatwoot_account_id") or "").strip(),
             str(st.get("chatwoot_token") or ""),
             str(st.get("chatwoot_saudacao") or ""))
@@ -2039,10 +2052,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json(400, {"error": "Prazo da resposta inválido (use 1 a 168 horas)"})
                 # Integracao com o Chatwoot (atender no canal oficial)
                 if "chatwoot_url" in body:
-                    u = str(body["chatwoot_url"] or "").strip().rstrip("/")
-                    if u and not u.startswith(("http://", "https://")):
-                        u = "https://" + u
-                    st["chatwoot_url"] = u
+                    # aceita o endereço colado do navegador (com /app/...): guarda só a raiz
+                    st["chatwoot_url"] = chatwoot_base_url(body["chatwoot_url"])
                 if "chatwoot_account_id" in body:
                     st["chatwoot_account_id"] = re.sub(r"[^0-9]", "", str(body["chatwoot_account_id"]))
                 if "chatwoot_token" in body:
@@ -2051,6 +2062,55 @@ class Handler(BaseHTTPRequestHandler):
                     st["chatwoot_saudacao"] = str(body["chatwoot_saudacao"] or "").strip()[:2000]
                 save_db()
                 return self.send_json(200, {"settings": settings_publico()})
+
+        # Testa a conexao com o Chatwoot e devolve um veredito em portugues claro
+        # (token errado? conta errada? servidor fora?). So gestor. NUNCA inclui o
+        # token nas mensagens.
+        if path == "/api/chatwoot/teste" and method == "POST":
+            if not gestor:
+                return self.send_json(403, {"error": "Teste disponível só para gerente/administrador"})
+            base, acc, token, saud = chatwoot_cfg()
+            faltas = [n for n, v in (("o endereço", base), ("o nº da conta", acc), ("o token", token)) if not v]
+            if faltas:
+                return self.send_json(200, {"ok": False, "mensagem":
+                    "Falta preencher %s — preencha, salve e teste de novo." % " e ".join(faltas)})
+
+            def _get(url):
+                req = urllib.request.Request(url, headers={"api_access_token": token})
+                with _ABRIDOR_SEM_REDIRECT.open(req, timeout=10):
+                    pass
+
+            try:
+                _get("%s/api/v1/profile" % base)
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    return self.send_json(200, {"ok": False, "mensagem":
+                        "❌ O Chatwoot recusou o token (HTTP %d). Copie de novo em: "
+                        "Chatwoot → sua foto (canto inferior esquerdo) → Configurações de perfil → "
+                        "Token de acesso — e cole aqui por cima." % e.code})
+                return self.send_json(200, {"ok": False, "mensagem":
+                    "❌ O endereço %s respondeu HTTP %d — parece não ser a raiz do Chatwoot. "
+                    "Use só o começo do endereço (ex.: https://chat.novaeradrones.com.br)." % (base, e.code)})
+            except Exception as e:
+                return self.send_json(200, {"ok": False, "mensagem":
+                    "❌ Não consegui falar com %s (%s) — confira o endereço e se o servidor "
+                    "do CRM tem acesso à internet." % (base, type(e).__name__)})
+            try:
+                _get("%s/api/v1/accounts/%s/labels" % (base, acc))
+            except urllib.error.HTTPError as e:
+                return self.send_json(200, {"ok": False, "mensagem":
+                    "⚠️ O token é válido, mas a conta Nº %s foi recusada (HTTP %d). Confira o "
+                    "número: ele aparece no endereço do Chatwoot, em /app/accounts/NÚMERO/." % (acc, e.code)})
+            except Exception as e:
+                return self.send_json(200, {"ok": False, "mensagem":
+                    "❌ Não consegui falar com o Chatwoot (%s) — tente de novo." % type(e).__name__})
+            if not saud:
+                return self.send_json(200, {"ok": True, "mensagem":
+                    "✅ Conexão OK (token e conta Nº %s válidos) — mas a saudação está vazia. "
+                    "Escreva a mensagem e salve." % acc})
+            return self.send_json(200, {"ok": True, "mensagem":
+                "✅ Tudo certo! Token válido e conta Nº %s acessível — o botão "
+                "\"Atender no Chatwoot\" vai enviar a saudação automática." % acc})
 
         # Relatorio por campanha (quantos leads/produtores/ganhos e R$ cada uma gerou)
         if path == "/api/report/campanhas" and method == "GET":

@@ -2192,9 +2192,27 @@ $('#btnSaveCw').addEventListener('click', async () => {
     await api('/api/settings', { method: 'PATCH', body: JSON.stringify(body) });
     await loadCampaigns(); renderCampaigns();
     await loadStats(); // atualiza a base p/ os botões dos cards
-    toast('✅ Chatwoot configurado — botão "Atender no Chatwoot" ativo');
+    toast('✅ Configuração salva — testando a conexão…');
+    testarChatwoot(); // salvar já testa: o resultado aparece logo abaixo
   } catch (err) { toast('Erro: ' + err.message); }
 });
+
+// Testa a conexão com o Chatwoot e mostra o veredito em texto claro no painel
+async function testarChatwoot() {
+  const box = $('#cwTesteBox');
+  box.hidden = false;
+  box.className = 'cw-teste';
+  box.textContent = '⏳ Testando a conexão com o Chatwoot…';
+  try {
+    const r = await api('/api/chatwoot/teste', { method: 'POST' });
+    box.textContent = r.mensagem;
+    box.className = 'cw-teste ' + (r.ok ? 'ok' : 'falha');
+  } catch (err) {
+    box.textContent = '❌ ' + err.message;
+    box.className = 'cw-teste falha';
+  }
+}
+$('#btnTestCw').addEventListener('click', testarChatwoot);
 
 // ---- Painel de Alertas (prazos configuráveis) ----
 function abrirCfgAlertas() {
