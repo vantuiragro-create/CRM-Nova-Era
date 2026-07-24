@@ -774,17 +774,20 @@ function chatwootConvUrl(lead) {
 // bloqueia o popup) e pede ao servidor para mandar a saudação automática.
 // O servidor manda a saudação só 1x por ciclo de contato (reclicar não repete).
 const cwEmVoo = new Set(); // trava local de duplo-clique (por lead)
-function atenderNoChatwoot(lead) {
+function atenderNoChatwoot(lead, jaAbriu) {
+  // jaAbriu = o clique veio de um LINK de verdade (o navegador já abriu a aba
+  // sozinho — link nunca é barrado por bloqueador de pop-up); aqui só resta
+  // enviar a saudação e registrar o contato.
   if (cwEmVoo.has(lead.id)) return;
   cwEmVoo.add(lead.id);
   const url = chatwootConvUrl(lead);
-  if (url) window.open(url, '_blank', 'noopener');
+  if (!jaAbriu && url) window.open(url, '_blank', 'noopener');
   api('/api/leads/' + encodeURIComponent(lead.id) + '/chatwoot', { method: 'POST' })
     .then((res) => {
       // guarda a base p/ os próximos cliques abrirem a aba na hora
       if (res.chatwoot_url) settings.chatwoot_url = res.chatwoot_url;
       if (res.chatwoot_account_id) settings.chatwoot_account_id = res.chatwoot_account_id;
-      if (!url && res.conversa_url) {
+      if (!jaAbriu && !url && res.conversa_url) {
         // fora do gesto do clique o navegador pode bloquear a aba — avisa
         const w = window.open(res.conversa_url, '_blank', 'noopener');
         if (!w) toast('🔒 O navegador bloqueou a aba — clique no botão de novo para abrir a conversa');
@@ -1277,13 +1280,22 @@ function renderCard(lead) {
     }
     card.append(r);
   }
-  // lead com conversa no Chatwoot: botão do canal OFICIAL (com saudação automática)
+  // lead com conversa no Chatwoot: LINK do canal OFICIAL (com saudação automática).
+  // É um link de verdade (não window.open) — bloqueador de pop-up não barra.
   if (lead.chatwoot_conversation_id) {
     const r = el('div', 'row');
-    const b = el('button', 'cw-btn', '📨 Atender no Chatwoot');
-    b.type = 'button';
+    const urlCw = chatwootConvUrl(lead);
+    const b = document.createElement('a');
+    b.className = 'cw-btn';
+    b.textContent = '📨 Atender no Chatwoot';
     b.title = 'Abre a conversa no Chatwoot e envia a saudação automática (canal oficial da empresa)';
-    b.addEventListener('click', (e) => { e.stopPropagation(); atenderNoChatwoot(lead); });
+    b.rel = 'noopener';
+    if (urlCw) { b.href = urlCw; b.target = '_blank'; } else b.href = '#';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!urlCw) { e.preventDefault(); atenderNoChatwoot(lead); } // sem URL ainda: caminho antigo
+      else atenderNoChatwoot(lead, true); // o link já abriu a aba; só envia a saudação
+    });
     r.append(b);
     card.append(r);
   }
@@ -1460,8 +1472,13 @@ function openModal(lead) {
     'campanha', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'observacoes', 'origem_canal'];
   for (const f of fields) if (form[f]) form[f].value = lead[f] != null ? lead[f] : '';
   atualizaWaLead();
-  // botão "Atender no Chatwoot" só para lead com conversa lá
-  $('#cwLead').hidden = !lead.chatwoot_conversation_id;
+  // link "Atender no Chatwoot" só para lead com conversa lá (href = link real,
+  // p/ o navegador abrir a aba sem depender de window.open/pop-up)
+  const cwEl = $('#cwLead');
+  cwEl.hidden = !lead.chatwoot_conversation_id;
+  const cwHref = chatwootConvUrl(lead);
+  if (cwHref) cwEl.setAttribute('href', cwHref);
+  else cwEl.removeAttribute('href');
 
   // drones do pedido (lead antigo: cai no produto único; lead sem nada: 1 linha vazia)
   const itensIni = (lead.itens && lead.itens.length)
@@ -2622,11 +2639,14 @@ form.telefone.addEventListener('input', atualizaWaLead);
 // abrir o WhatsApp pela ficha aberta também marca "aguardando registrar a resposta"
 const waLeadEl = $('#waLead');
 if (waLeadEl) waLeadEl.addEventListener('click', () => registrarContatoWhatsapp(form.id.value));
-// atender pelo Chatwoot direto da ficha (canal oficial + saudação automática)
+// atender pelo Chatwoot direto da ficha (canal oficial + saudação automática).
+// Quando o href está setado, o próprio link abre a aba; aqui só sai a saudação.
 const cwLeadEl = $('#cwLead');
-if (cwLeadEl) cwLeadEl.addEventListener('click', () => {
+if (cwLeadEl) cwLeadEl.addEventListener('click', (e) => {
   const lead = leadsCache.find((l) => l.id === form.id.value);
-  if (lead) atenderNoChatwoot(lead);
+  if (!lead) { e.preventDefault(); return; }
+  if (cwLeadEl.getAttribute('href')) atenderNoChatwoot(lead, true);
+  else { e.preventDefault(); atenderNoChatwoot(lead); }
 });
 form.regiao.addEventListener('input', (e) => renderCidadeBox(e.target.value));
 form.regiao.addEventListener('focus', (e) => renderCidadeBox(e.target.value));

@@ -473,6 +473,7 @@ body.modo-servicos .toolbar { background: #eef8fb; box-shadow: inset 0 3px 0 #0e
   border-radius: 7px; padding: 3px 9px; display: inline-flex; align-items: center; gap: 5px;
 }
 .cw-btn:hover { background: #dce9fa; }
+a.cw-btn, a.cw-btn:visited { text-decoration: none; color: #1f4b99; } /* é um LINK de verdade (pop-up não barra) */
 #cwLead.cw-btn { margin-top: 4px; }
 /* resultado do "Testar conexão" do Chatwoot (texto claro p/ o gestor) */
 .cw-teste {
